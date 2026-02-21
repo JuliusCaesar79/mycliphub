@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import InboxScreen from "../../features/inbox/InboxScreen";
 import CardDetailScreen from "../../features/card/CardDetailScreen";
 import { Colors } from "../theme";
+import { navigationRef } from "../navigationRef";
 
 export type RootStackParamList = {
   Inbox: undefined;
@@ -14,7 +15,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function AppNavigator() {
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
         screenOptions={{
           headerStyle: {

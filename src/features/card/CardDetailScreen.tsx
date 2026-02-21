@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -28,6 +28,14 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   const removeClipItem = useCardStore((s) => s.removeClipItem);
   const clipItemsByCardId = useCardStore((s) => s.clipItemsByCardId);
 
+  // STEP 10.2: rename action (may not exist yet -> safe selector)
+  const renameCard = useCardStore(
+    (s: any) =>
+      s.renameCard as
+        | ((id: string, newTitle: string) => Promise<void> | void)
+        | undefined
+  );
+
   const clips = useMemo(
     () => clipItemsByCardId[cardId] ?? [],
     [clipItemsByCardId, cardId]
@@ -35,14 +43,31 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   const [text, setText] = useState("");
 
+  // --- STEP 10.2: inline title editing state ---
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("");
+  const titleInputRef = useRef<TextInput>(null);
+
+  // Keep draftTitle in sync when card changes (e.g., store refresh)
+  useEffect(() => {
+    if (!card) return;
+    if (!isEditingTitle) setDraftTitle(card.title ?? "");
+  }, [card?.title, card, isEditingTitle]);
+
+  // Dynamic header title (also reflects draft while editing)
   useEffect(() => {
     if (!card) {
       navigation.setOptions({ title: "Card" });
       return;
     }
-    const title = `${card.title}${card.pinned ? " 📌" : ""}`;
+
+    const baseTitle = isEditingTitle
+      ? (draftTitle || card.title || "Card")
+      : card.title;
+
+    const title = `${baseTitle}${card.pinned ? " 📌" : ""}`;
     navigation.setOptions({ title });
-  }, [card?.title, card?.pinned, navigation, card]);
+  }, [card?.title, card?.pinned, navigation, card, isEditingTitle, draftTitle]);
 
   // Load clips from SQLite when opening this screen
   useEffect(() => {
@@ -50,6 +75,14 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       console.error("Failed to load clips:", err);
     });
   }, [cardId, loadClips]);
+
+  // Focus input after entering edit mode
+  useEffect(() => {
+    if (isEditingTitle) {
+      const t = setTimeout(() => titleInputRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [isEditingTitle]);
 
   if (!card) {
     return (
@@ -71,6 +104,46 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       </View>
     );
   }
+
+  const beginEditTitle = () => {
+    setDraftTitle(card.title ?? "");
+    setIsEditingTitle(true);
+  };
+
+  const cancelEditTitle = () => {
+    setDraftTitle(card.title ?? "");
+    setIsEditingTitle(false);
+  };
+
+  const commitTitle = async () => {
+    const trimmed = draftTitle.trim();
+    const nextTitle = trimmed.length ? trimmed : "Untitled";
+    const current = (card.title ?? "").trim();
+
+    // No-op if unchanged
+    if (nextTitle === current) {
+      setIsEditingTitle(false);
+      setDraftTitle(card.title ?? "");
+      return;
+    }
+
+    try {
+      if (!renameCard) {
+        Alert.alert(
+          "Rename not wired yet",
+          "The UI is ready, but 'renameCard' is missing in the store.\n\nAdd a renameCard(cardId, title) action that persists to SQLite and updates updatedAt."
+        );
+        // keep user in edit mode so they don't lose text
+        return;
+      }
+
+      await renameCard(cardId, nextTitle);
+      setIsEditingTitle(false);
+    } catch (err) {
+      console.error("Failed to rename card:", err);
+      Alert.alert("Error", "Couldn't rename this card. Please try again.");
+    }
+  };
 
   const onAdd = async () => {
     const trimmed = text.trim();
@@ -103,9 +176,88 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     >
       <View style={{ flex: 1, padding: 16 }}>
         {/* Header content (in-page) */}
-        <Text style={{ fontSize: 24, fontWeight: "700", color: Colors.deep }}>
-          {card.title}
-        </Text>
+        <View style={{ marginBottom: 6 }}>
+          {!isEditingTitle ? (
+            <Pressable
+              onPress={beginEditTitle}
+              android_ripple={{ color: "#00000008" }}
+              style={{ borderRadius: 12, paddingVertical: 4, overflow: "hidden" }}
+            >
+              <Text style={{ fontSize: 24, fontWeight: "800", color: Colors.deep }}>
+                {card.title}
+              </Text>
+              <Text style={{ marginTop: 4, color: Colors.muted }}>
+                Tap to rename
+              </Text>
+            </Pressable>
+          ) : (
+            <View
+              style={{
+                backgroundColor: Colors.white,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: "#00000010",
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: Colors.deep, fontWeight: "800", marginBottom: 6 }}>
+                Rename card
+              </Text>
+
+              <TextInput
+                ref={titleInputRef}
+                value={draftTitle}
+                onChangeText={setDraftTitle}
+                placeholder="Card title…"
+                placeholderTextColor={Colors.muted}
+                style={{
+                  backgroundColor: "#00000006",
+                  borderRadius: 12,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  color: Colors.deep,
+                  fontWeight: "700",
+                }}
+                returnKeyType="done"
+                onSubmitEditing={commitTitle}
+                onBlur={commitTitle}
+                autoCapitalize="sentences"
+                autoCorrect={false}
+              />
+
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
+                <Pressable
+                  onPress={cancelEditTitle}
+                  android_ripple={{ color: "#00000010" }}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 12,
+                    backgroundColor: "#00000008",
+                    overflow: "hidden",
+                  }}
+                >
+                  <Text style={{ color: Colors.deep, fontWeight: "800" }}>Cancel</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={commitTitle}
+                  android_ripple={{ color: "#ffffff33" }}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 12,
+                    backgroundColor: Colors.accent,
+                    overflow: "hidden",
+                  }}
+                >
+                  <Text style={{ color: Colors.white, fontWeight: "900" }}>Save</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+        </View>
+
         <Text style={{ marginTop: 6, color: Colors.muted }}>
           {card.pinned ? "📌 Pinned" : "Not pinned"}
         </Text>

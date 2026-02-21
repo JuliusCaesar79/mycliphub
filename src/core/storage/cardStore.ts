@@ -17,28 +17,23 @@ export type ClipItem = {
 type CardState = {
   cards: Card[];
 
-  // ClipItems separati, DB-backed
   clipItemsByCardId: Record<string, ClipItem[]>;
 
-  // DB bootstrap
   loadFromDB: () => Promise<void>;
-
-  // Clips DB
   loadClips: (cardId: string) => Promise<void>;
 
-  createCard: (title?: string) => Promise<void>;
+  // 🔥 FIX: ora ritorna string (cardId)
+  createCard: (title?: string) => Promise<string>;
+
   togglePin: (id: string) => Promise<void>;
   archiveCard: (id: string) => Promise<void>;
+  renameCard: (id: string, newTitle: string) => Promise<void>;
 
   addClipItem: (cardId: string, text: string) => Promise<void>;
   removeClipItem: (cardId: string, clipId: string) => Promise<void>;
 
   getClipItems: (cardId: string) => ClipItem[];
 };
-
-/* -----------------------------
-   Helpers (STEP 8.3)
------------------------------- */
 
 const looksLikeUrl = (value: string) => {
   const v = value.trim();
@@ -47,9 +42,17 @@ const looksLikeUrl = (value: string) => {
 
 const normalizeUrl = (value: string) => value.trim();
 
-/* -----------------------------
-   Store (DB-first)
------------------------------- */
+const normalizeTitle = (value: string) => {
+  const t = (value ?? "").trim();
+  return t.length ? t : "Untitled";
+};
+
+const sortCards = (cards: Card[]) => {
+  cards.sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    return b.updatedAt - a.updatedAt;
+  });
+};
 
 export const useCardStore = create<CardState>((set, get) => ({
   cards: [],
@@ -57,14 +60,8 @@ export const useCardStore = create<CardState>((set, get) => ({
 
   loadFromDB: async () => {
     const cards = await CardRepository.getAll();
+    sortCards(cards);
 
-    // pinned sopra, poi updatedAt desc
-    cards.sort((a, b) => {
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-      return b.updatedAt - a.updatedAt;
-    });
-
-    // prepara bucket vuoti per clips
     set((state) => {
       const nextMap = { ...state.clipItemsByCardId };
       for (const c of cards) {
@@ -84,13 +81,14 @@ export const useCardStore = create<CardState>((set, get) => ({
     }));
   },
 
+  // 🔥 FIX CRITICO QUI
   createCard: async (title) => {
     const now = Date.now();
     const id = uuid();
 
     const card: Card = {
       id,
-      title: title?.trim() ? title.trim() : "Untitled",
+      title: normalizeTitle(title ?? ""),
       pinned: false,
       archived: false,
       createdAt: now,
@@ -106,6 +104,8 @@ export const useCardStore = create<CardState>((set, get) => ({
         [id]: state.clipItemsByCardId[id] ?? [],
       },
     }));
+
+    return id; // ✅ QUESTO ERA IL PROBLEMA
   },
 
   togglePin: async (id) => {
@@ -126,20 +126,12 @@ export const useCardStore = create<CardState>((set, get) => ({
         c.id === id ? { ...c, pinned: nextPinned, updatedAt: now } : c
       );
 
-      nextCards.sort((a, b) => {
-        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-        return b.updatedAt - a.updatedAt;
-      });
-
+      sortCards(nextCards);
       return { cards: nextCards };
     });
   },
 
   archiveCard: async (id) => {
-    const state = get();
-    const card = state.cards.find((c) => c.id === id);
-    if (!card) return;
-
     const now = Date.now();
 
     await CardRepository.updateFields(id, {
@@ -152,6 +144,32 @@ export const useCardStore = create<CardState>((set, get) => ({
         c.id === id ? { ...c, archived: true, updatedAt: now } : c
       ),
     }));
+  },
+
+  renameCard: async (id, newTitle) => {
+    const state = get();
+    const card = state.cards.find((c) => c.id === id);
+    if (!card) return;
+
+    const nextTitle = normalizeTitle(newTitle);
+    const currentTitle = normalizeTitle(card.title);
+    if (nextTitle === currentTitle) return;
+
+    const now = Date.now();
+
+    await CardRepository.updateFields(id, {
+      title: nextTitle,
+      updatedAt: now,
+    });
+
+    set((s) => {
+      const nextCards = s.cards.map((c) =>
+        c.id === id ? { ...c, title: nextTitle, updatedAt: now } : c
+      );
+
+      sortCards(nextCards);
+      return { cards: nextCards };
+    });
   },
 
   addClipItem: async (cardId, text) => {
@@ -169,13 +187,9 @@ export const useCardStore = create<CardState>((set, get) => ({
       createdAt: now,
     };
 
-    // 1) DB
     await ClipRepository.create(clip);
-
-    // 2) aggiorna updatedAt card (DB + UI)
     await CardRepository.updateFields(cardId, { updatedAt: now });
 
-    // 3) UI
     set((state) => {
       const current = state.clipItemsByCardId[cardId] ?? [];
       return {
@@ -191,10 +205,8 @@ export const useCardStore = create<CardState>((set, get) => ({
   },
 
   removeClipItem: async (cardId, clipId) => {
-    // 1) DB
     await ClipRepository.deleteById(clipId);
 
-    // 2) UI
     set((state) => {
       const current = state.clipItemsByCardId[cardId] ?? [];
       const next = current.filter((x) => x.id !== clipId);
