@@ -12,7 +12,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Inbox">;
 // ---- tiny date helpers (safe, no Intl dependency) ----
 function toMs(value: unknown): number {
   if (value == null) return 0;
-  if (typeof value === "number") return value < 1e12 ? value * 1000 : value; // seconds -> ms safeguard
+  if (typeof value === "number") return value < 1e12 ? value * 1000 : value;
   if (typeof value === "string") {
     const n = Number(value);
     if (!Number.isNaN(n)) return n < 1e12 ? n * 1000 : n;
@@ -44,6 +44,8 @@ export default function InboxScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
 
   const cards = useCardStore((s) => s.cards);
+  const clipItemsByCardId = useCardStore((s) => s.clipItemsByCardId);
+
   const createCard = useCardStore((s) => s.createCard);
   const togglePin = useCardStore((s) => s.togglePin);
   const archiveCard = useCardStore((s) => s.archiveCard);
@@ -53,7 +55,6 @@ export default function InboxScreen({ navigation }: Props) {
 
     const getSortKey = (c: any) => toMs(c.updatedAt) || toMs(c.createdAt) || 0;
 
-    // pinned DESC, then updatedAt DESC (fallback createdAt)
     return [...visible].sort((a: any, b: any) => {
       const pa = a.pinned ? 1 : 0;
       const pb = b.pinned ? 1 : 0;
@@ -63,7 +64,6 @@ export default function InboxScreen({ navigation }: Props) {
       const kb = getSortKey(b);
       if (ka !== kb) return kb - ka;
 
-      // stable-ish fallback: title, then id
       const ta = String(a.title ?? "");
       const tb = String(b.title ?? "");
       if (ta !== tb) return ta.localeCompare(tb);
@@ -87,7 +87,7 @@ export default function InboxScreen({ navigation }: Props) {
 
             <Text style={{ marginTop: 10, color: Colors.primary, textAlign: "center", lineHeight: 20 }}>
               Create a card to start collecting notes and links.
-              {"\n"}Tip: you’ll soon be able to “Share to MyClipHub”.
+              {"\n"}Tip: you can also “Share to MyClipHub”.
             </Text>
 
             <Pressable
@@ -116,6 +116,9 @@ export default function InboxScreen({ navigation }: Props) {
           const label = hasMeaningfulUpdate ? "Updated" : "Created";
           const shownMs = hasMeaningfulUpdate ? updatedMs : createdMs;
 
+          const clips = clipItemsByCardId[item.id] ?? [];
+          const isShared = clips.length > 0;
+
           return (
             <Pressable
               onPress={() => navigation.navigate("CardDetail", { cardId: item.id })}
@@ -129,9 +132,37 @@ export default function InboxScreen({ navigation }: Props) {
                 borderColor: "#00000010",
               }}
             >
-              <Text style={{ fontSize: 16, fontWeight: "800", color: Colors.deep }}>
-                {item.title} {item.pinned ? "📌" : ""}
-              </Text>
+              {/* Title Row */}
+              <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+                <Text style={{ fontSize: 16, fontWeight: "800", color: Colors.deep }}>
+                  {item.title} {item.pinned ? "📌" : ""}
+                </Text>
+
+                {isShared && (
+                  <View
+                    style={{
+                      marginLeft: 8,
+                      paddingHorizontal: 8,
+                      paddingVertical: 2,
+                      borderRadius: 999,
+                      backgroundColor: "#E6F0FF",
+                      borderWidth: 1,
+                      borderColor: "#D0E2FF",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 10,
+                        fontWeight: "700",
+                        color: "#1D4ED8",
+                        letterSpacing: 0.3,
+                      }}
+                    >
+                      SHARED
+                    </Text>
+                  </View>
+                )}
+              </View>
 
               {!!shownMs && (
                 <Text style={{ marginTop: 6, fontSize: 12, color: "#00000066" }}>
