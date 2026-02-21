@@ -8,7 +8,12 @@ class ShareToSaveModule(private val reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
 
   companion object {
-    private var lastSharedText: String? = null
+    // testo in attesa di essere consumato da JS (consume-once)
+    private var pendingShareText: String? = null
+
+    // dedup di sicurezza (evita doppio firing ravvicinato)
+    private var lastEmittedText: String? = null
+
     private var moduleRef: ShareToSaveModule? = null
 
     fun handleIntent(intent: Intent?) {
@@ -19,11 +24,15 @@ class ShareToSaveModule(private val reactContext: ReactApplicationContext) :
       val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()
       if (text.isNullOrEmpty()) return
 
-      // Avoid duplicate firing on resume
-      if (text == lastSharedText) return
-      lastSharedText = text
+      // Dedup: evita doppio handling sullo stesso contenuto
+      if (text == lastEmittedText) return
 
+      // Metti in pending (per getInitialShare) e prova a emettere subito se JS è pronto
+      pendingShareText = text
+
+      // Se il modulo è già inizializzato, emetti runtime event e marca come emesso
       moduleRef?.emitToJS(text)
+      lastEmittedText = text
     }
   }
 
@@ -45,13 +54,16 @@ class ShareToSaveModule(private val reactContext: ReactApplicationContext) :
 
   @ReactMethod
   fun getInitialShare(promise: Promise) {
-    val text = lastSharedText
+    val text = pendingShareText
+    pendingShareText = null // ✅ consume-once
+
     if (text.isNullOrEmpty()) {
       promise.resolve(null)
-    } else {
-      val params = Arguments.createMap()
-      params.putString("text", text)
-      promise.resolve(params)
+      return
     }
+
+    val params = Arguments.createMap()
+    params.putString("text", text)
+    promise.resolve(params)
   }
 }
