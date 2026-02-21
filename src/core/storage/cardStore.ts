@@ -16,13 +16,11 @@ export type ClipItem = {
 
 type CardState = {
   cards: Card[];
-
   clipItemsByCardId: Record<string, ClipItem[]>;
 
   loadFromDB: () => Promise<void>;
   loadClips: (cardId: string) => Promise<void>;
 
-  // 🔥 FIX: ora ritorna string (cardId)
   createCard: (title?: string) => Promise<string>;
 
   togglePin: (id: string) => Promise<void>;
@@ -81,7 +79,6 @@ export const useCardStore = create<CardState>((set, get) => ({
     }));
   },
 
-  // 🔥 FIX CRITICO QUI
   createCard: async (title) => {
     const now = Date.now();
     const id = uuid();
@@ -105,7 +102,7 @@ export const useCardStore = create<CardState>((set, get) => ({
       },
     }));
 
-    return id; // ✅ QUESTO ERA IL PROBLEMA
+    return id;
   },
 
   togglePin: async (id) => {
@@ -176,14 +173,24 @@ export const useCardStore = create<CardState>((set, get) => ({
     const trimmed = (text ?? "").trim();
     if (!trimmed) return;
 
-    const now = Date.now();
     const isLink = looksLikeUrl(trimmed);
+    const normalizedText = isLink ? normalizeUrl(trimmed) : trimmed;
+    const nextType: ClipItemType = isLink ? "link" : "text";
+
+    // ✅ STEP 14.3 — Dedup identico nella stessa card (no DB write)
+    const existing = get().clipItemsByCardId[cardId] ?? [];
+    const alreadyThere = existing.some(
+      (c) => c.type === nextType && c.text === normalizedText
+    );
+    if (alreadyThere) return;
+
+    const now = Date.now();
 
     const clip: ClipItem = {
       id: uuid(),
       cardId,
-      type: isLink ? "link" : "text",
-      text: isLink ? normalizeUrl(trimmed) : trimmed,
+      type: nextType,
+      text: normalizedText,
       createdAt: now,
     };
 
