@@ -40,6 +40,55 @@ function logError(message: string, err?: unknown) {
   }
 }
 
+function looksLikeUrl(input: string) {
+  // accetta URL con schema o domini "nudi" tipo example.com/abc
+  const s = input.trim();
+  if (!s) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  // dominio.tld con opzionale path/query
+  return /^[a-z0-9.-]+\.[a-z]{2,}(\/|$|\?)/i.test(s);
+}
+
+function normalizeToUrl(input: string) {
+  const s = input.trim();
+  if (/^https?:\/\//i.test(s)) return s;
+  // per domini nudi, aggiungiamo https:// per poter usare URL()
+  return `https://${s}`;
+}
+
+function clamp(s: string, max: number) {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}…`;
+}
+
+function makeAutoTitle(raw: string) {
+  const compact = raw.replace(/\s+/g, " ").trim();
+  if (!compact) return "New clip";
+
+  if (looksLikeUrl(compact)) {
+    try {
+      const u = new URL(normalizeToUrl(compact));
+      const host = u.host.replace(/^www\./i, "");
+
+      // path “umana”: niente slash finale, niente query lunga
+      let path = u.pathname || "";
+      if (path === "/") path = "";
+
+      // Preferiamo host + un path corto e leggibile
+      const prettyPath = path ? clamp(path, 36) : "";
+      const title = prettyPath ? `${host} — ${prettyPath}` : host;
+
+      return clamp(title, 60);
+    } catch {
+      // fallback se URL() fallisce
+      return clamp(compact, 40);
+    }
+  }
+
+  // fallback testo normale
+  return clamp(compact, 40);
+}
+
 export function wireShareToSaveOnce() {
   if (wired) return;
   wired = true;
@@ -60,9 +109,7 @@ export function wireShareToSaveOnce() {
     try {
       const { createCard, addClipItem } = useCardStore.getState();
 
-      // Titolo automatico: primi 40 caratteri (senza andare a capo)
-      const compact = raw.replace(/\s+/g, " ").trim();
-      const title = compact.length > 40 ? `${compact.substring(0, 40)}…` : compact;
+      const title = makeAutoTitle(raw);
 
       const createdId = await createCard(title);
 
@@ -77,7 +124,6 @@ export function wireShareToSaveOnce() {
       await addClipItem(cardId, raw);
       navToCardDetail(cardId);
 
-      // ✅ Feedback utente: toast nativo Android (zero dipendenze)
       if (Platform.OS === "android") {
         ToastAndroid.show("Saved to MyClipHub", ToastAndroid.SHORT);
       }
@@ -88,7 +134,6 @@ export function wireShareToSaveOnce() {
     }
   };
 
-  // Evita doppie subscriptions se in futuro richiami per sbaglio (extra hardening)
   subscription?.remove?.();
   subscription = emitter.addListener("share_to_save", handleShare);
 
