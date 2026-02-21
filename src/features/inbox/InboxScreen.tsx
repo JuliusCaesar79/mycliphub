@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useLayoutEffect, useMemo } from "react";
 import { FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -49,6 +49,30 @@ export default function InboxScreen({ navigation }: Props) {
   const createCard = useCardStore((s) => s.createCard);
   const togglePin = useCardStore((s) => s.togglePin);
   const archiveCard = useCardStore((s) => s.archiveCard);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Pressable
+          onPress={() => navigation.navigate("Settings")}
+          android_ripple={{ color: "#00000010", borderless: true }}
+          style={{
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 12,
+            overflow: "hidden",
+            backgroundColor: "#00000008",
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Open settings"
+        >
+          <Text style={{ color: Colors.deep, fontWeight: "800", fontSize: 14 }}>
+            ⚙️
+          </Text>
+        </Pressable>
+      ),
+    });
+  }, [navigation]);
 
   const data = useMemo(() => {
     const visible = cards.filter((c) => !c.archived);

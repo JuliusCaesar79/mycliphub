@@ -6,6 +6,7 @@ import {
 } from "react-native";
 import { useCardStore } from "../storage/cardStore";
 import { getActiveCardDetailId, navToCardDetail } from "../../app/navigationRef";
+import { usePrefsStore } from "../storage/prefsStore";
 
 const { ShareToSaveModule } = NativeModules;
 
@@ -16,7 +17,6 @@ const emitter =
 
 let wired = false;
 
-// Dedup window: evita il doppio handling immediato (initial intent + runtime emit)
 let lastRaw: string | null = null;
 let lastAt = 0;
 const DEDUP_WINDOW_MS = 1200;
@@ -24,20 +24,12 @@ const DEDUP_WINDOW_MS = 1200;
 let subscription: { remove: () => void } | null = null;
 
 function logDebug(...args: any[]) {
-  if (__DEV__) {
-    // eslint-disable-next-line no-console
-    console.log(...args);
-  }
+  if (__DEV__) console.log(...args);
 }
 
 function logError(message: string, err?: unknown) {
-  if (__DEV__) {
-    // eslint-disable-next-line no-console
-    console.error(message, err);
-  } else {
-    // eslint-disable-next-line no-console
-    console.log(message);
-  }
+  if (__DEV__) console.error(message, err);
+  else console.log(message);
 }
 
 function looksLikeUrl(input: string) {
@@ -66,13 +58,10 @@ function makeAutoTitle(raw: string) {
     try {
       const u = new URL(normalizeToUrl(compact));
       const host = u.host.replace(/^www\./i, "");
-
       let path = u.pathname || "";
       if (path === "/") path = "";
-
       const prettyPath = path ? clamp(path, 36) : "";
       const title = prettyPath ? `${host} — ${prettyPath}` : host;
-
       return clamp(title, 60);
     } catch {
       return clamp(compact, 40);
@@ -93,30 +82,40 @@ export function wireShareToSaveOnce() {
     if (!raw) return;
 
     const now = Date.now();
-
-    // Dedup robusto: blocca SOLO se stesso contenuto arriva entro una finestra breve
     if (raw === lastRaw && now - lastAt < DEDUP_WINDOW_MS) return;
     lastRaw = raw;
     lastAt = now;
 
     try {
       const { createCard, addClipItem } = useCardStore.getState();
+      const { shareBehavior, lastOpenedCardId } = usePrefsStore.getState();
 
-      // ✅ STEP 14.1: se siamo già in CardDetail → append alla card aperta
       const activeCardId = getActiveCardDetailId();
-      if (activeCardId) {
-        await addClipItem(activeCardId, raw);
-        navToCardDetail(activeCardId);
+
+      // ✅ STEP 14.2: decidi target card
+      let targetCardId: string | null = null;
+
+      if (shareBehavior === "append_current") {
+        targetCardId = activeCardId;
+      } else if (shareBehavior === "append_last") {
+        targetCardId = activeCardId || lastOpenedCardId;
+      } else {
+        targetCardId = null; // "new"
+      }
+
+      if (targetCardId) {
+        await addClipItem(targetCardId, raw);
+        navToCardDetail(targetCardId);
 
         if (Platform.OS === "android") {
-          ToastAndroid.show("Added to current card", ToastAndroid.SHORT);
+          ToastAndroid.show("Added to card", ToastAndroid.SHORT);
         }
 
-        logDebug("[share-to-save] appended:", { cardId: activeCardId });
+        logDebug("[share-to-save] appended:", { cardId: targetCardId });
         return;
       }
 
-      // altrimenti: comportamento classico → nuova card
+      // fallback: nuova card
       const title = makeAutoTitle(raw);
       const createdId = await createCard(title);
 
@@ -136,16 +135,12 @@ export function wireShareToSaveOnce() {
 
       logDebug("[share-to-save] saved:", { cardId, title });
     } catch (err) {
-      logError("[share-to-save] failed to save clip", err);
+      logError("[share-to-save] failed", err);
     }
   };
 
   subscription?.remove?.();
   subscription = emitter.addListener("share_to_save", handleShare);
 
-  ShareToSaveModule.getInitialShare?.()
-    .then(handleShare)
-    .catch(() => {
-      // no-op
-    });
+  ShareToSaveModule.getInitialShare?.().then(handleShare).catch(() => {});
 }
