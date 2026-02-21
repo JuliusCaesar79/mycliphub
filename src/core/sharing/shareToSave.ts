@@ -5,7 +5,7 @@ import {
   ToastAndroid,
 } from "react-native";
 import { useCardStore } from "../storage/cardStore";
-import { navToCardDetail } from "../../app/navigationRef";
+import { getActiveCardDetailId, navToCardDetail } from "../../app/navigationRef";
 
 const { ShareToSaveModule } = NativeModules;
 
@@ -41,18 +41,15 @@ function logError(message: string, err?: unknown) {
 }
 
 function looksLikeUrl(input: string) {
-  // accetta URL con schema o domini "nudi" tipo example.com/abc
   const s = input.trim();
   if (!s) return false;
   if (/^https?:\/\//i.test(s)) return true;
-  // dominio.tld con opzionale path/query
   return /^[a-z0-9.-]+\.[a-z]{2,}(\/|$|\?)/i.test(s);
 }
 
 function normalizeToUrl(input: string) {
   const s = input.trim();
   if (/^https?:\/\//i.test(s)) return s;
-  // per domini nudi, aggiungiamo https:// per poter usare URL()
   return `https://${s}`;
 }
 
@@ -70,22 +67,18 @@ function makeAutoTitle(raw: string) {
       const u = new URL(normalizeToUrl(compact));
       const host = u.host.replace(/^www\./i, "");
 
-      // path “umana”: niente slash finale, niente query lunga
       let path = u.pathname || "";
       if (path === "/") path = "";
 
-      // Preferiamo host + un path corto e leggibile
       const prettyPath = path ? clamp(path, 36) : "";
       const title = prettyPath ? `${host} — ${prettyPath}` : host;
 
       return clamp(title, 60);
     } catch {
-      // fallback se URL() fallisce
       return clamp(compact, 40);
     }
   }
 
-  // fallback testo normale
   return clamp(compact, 40);
 }
 
@@ -109,11 +102,24 @@ export function wireShareToSaveOnce() {
     try {
       const { createCard, addClipItem } = useCardStore.getState();
 
-      const title = makeAutoTitle(raw);
+      // ✅ STEP 14.1: se siamo già in CardDetail → append alla card aperta
+      const activeCardId = getActiveCardDetailId();
+      if (activeCardId) {
+        await addClipItem(activeCardId, raw);
+        navToCardDetail(activeCardId);
 
+        if (Platform.OS === "android") {
+          ToastAndroid.show("Added to current card", ToastAndroid.SHORT);
+        }
+
+        logDebug("[share-to-save] appended:", { cardId: activeCardId });
+        return;
+      }
+
+      // altrimenti: comportamento classico → nuova card
+      const title = makeAutoTitle(raw);
       const createdId = await createCard(title);
 
-      // Fallback robusto: se per qualsiasi motivo non torna l'id, prendi la prima card (appena creata)
       const fallbackId = useCardStore.getState().cards[0]?.id;
       const cardId = (createdId as unknown as string | undefined) || fallbackId;
 
