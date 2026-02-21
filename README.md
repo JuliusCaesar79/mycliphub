@@ -95,3 +95,58 @@ To learn more about React Native, take a look at the following resources:
 - [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
 - [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
 - [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+
+---
+
+## 🔧 Development — Clean & Rebuild (Android)
+
+Procedura ufficiale per evitare:
+- cache sporca Metro
+- ghost share intents
+- errori Gradle intermittenti
+- build inconsistente
+
+### 1️⃣ Clean Gradle (Windows)
+
+cd android
+.\gradlew clean
+cd ..
+
+### 2️⃣ Reset Metro cache
+
+npx react-native start --reset-cache
+
+(chiudere eventuali Metro già aperti prima di eseguire)
+
+### 3️⃣ Rebuild debug
+
+In un nuovo terminale:
+
+npx react-native run-android
+
+---
+
+## 🧪 Smoke Test Share-to-Save
+
+Test raccomandato dopo modifiche su:
+- shareToSave.ts
+- Kotlin bridge
+- navigationRef
+- cardStore
+
+Procedura:
+1. Avvia app pulita
+2. Condividi 10–20 link consecutivi rapidamente
+3. Verifica:
+   - Nessuna card duplicata
+   - Nessuna clip con cardId null
+   - Ordinamento corretto (pinned DESC, updatedAt DESC)
+   - Nessun crash su resume
+
+---
+
+## 🏷 Versioning
+
+Ogni milestone stabile viene taggata:
+
+v0.1.x — MVP Offline-first + Share-to-Save Android
