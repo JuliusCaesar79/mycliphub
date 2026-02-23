@@ -9,6 +9,7 @@ import {
   Platform,
   Linking,
   Alert,
+  Share,
 } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
@@ -17,6 +18,28 @@ import { useCardStore } from "../../core/storage/cardStore";
 import { Colors } from "../../app/theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "CardDetail">;
+
+function buildShareMessage(args: {
+  title: string;
+  pinned?: boolean;
+  clips: Array<{ type: string; text: string }>;
+}) {
+  const title = (args.title ?? "").trim() || "Untitled";
+  const pinned = args.pinned ? " 📌" : "";
+  const header = `${title}${pinned}`;
+
+  const lines =
+    args.clips?.length > 0
+      ? args.clips.map((c) => {
+          const t = (c?.text ?? "").trim();
+          const isLink = c?.type === "link";
+          const prefix = isLink ? "🔗" : "•";
+          return `${prefix} ${t}`;
+        })
+      : ["(No clips yet)"];
+
+  return [header, "—", ...lines].join("\n");
+}
 
 export default function CardDetailScreen({ route, navigation }: Props) {
   const { cardId } = route.params;
@@ -62,19 +85,30 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     }
 
     const baseTitle = isEditingTitle
-      ? (draftTitle || card.title || "Card")
+      ? draftTitle || card.title || "Card"
       : card.title;
 
     const title = `${baseTitle}${card.pinned ? " 📌" : ""}`;
     navigation.setOptions({ title });
   }, [card?.title, card?.pinned, navigation, card, isEditingTitle, draftTitle]);
 
-  // Load clips from SQLite when opening this screen
+  /**
+   * STEP 16: i clip sono già caricati al boot.
+   * Fallback: se per qualche motivo non li abbiamo ancora in memoria, li carichiamo.
+   */
   useEffect(() => {
+    // se già abbiamo clip (anche 0 ma mappa presente) non serve fare nulla.
+    // Qui facciamo una scelta pragmatica:
+    // - Se la lista è vuota potremmo comunque essere "vuota davvero".
+    // - Ma in quel caso loadClips è fast e idempotente (e nel cardStore evita fetch se già presenti).
+    // Quindi: chiamiamo solo se la key non esiste proprio.
+    const hasKey = Object.prototype.hasOwnProperty.call(clipItemsByCardId, cardId);
+    if (hasKey) return;
+
     loadClips(cardId).catch((err) => {
       console.error("Failed to load clips:", err);
     });
-  }, [cardId, loadClips]);
+  }, [cardId, loadClips, clipItemsByCardId]);
 
   // Focus input after entering edit mode
   useEffect(() => {
@@ -168,6 +202,24 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     }
   };
 
+  const onShare = async () => {
+    try {
+      const message = buildShareMessage({
+        title: card.title ?? "Untitled",
+        pinned: card.pinned,
+        clips: clips.map((c) => ({ type: c.type, text: c.text })),
+      });
+
+      await Share.share(
+        { message, title: card.title ?? "MyClipHub Card" },
+        { dialogTitle: "Share card" }
+      );
+    } catch (err) {
+      console.error("Failed to share card:", err);
+      Alert.alert("Error", "Couldn't open the share sheet.");
+    }
+  };
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: Colors.background }}
@@ -186,9 +238,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
               <Text style={{ fontSize: 24, fontWeight: "800", color: Colors.deep }}>
                 {card.title}
               </Text>
-              <Text style={{ marginTop: 4, color: Colors.muted }}>
-                Tap to rename
-              </Text>
+              <Text style={{ marginTop: 4, color: Colors.muted }}>Tap to rename</Text>
             </Pressable>
           ) : (
             <View
@@ -225,7 +275,14 @@ export default function CardDetailScreen({ route, navigation }: Props) {
                 autoCorrect={false}
               />
 
-              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "flex-end",
+                  gap: 10,
+                  marginTop: 10,
+                }}
+              >
                 <Pressable
                   onPress={cancelEditTitle}
                   android_ripple={{ color: "#00000010" }}
@@ -258,9 +315,36 @@ export default function CardDetailScreen({ route, navigation }: Props) {
           )}
         </View>
 
-        <Text style={{ marginTop: 6, color: Colors.muted }}>
-          {card.pinned ? "📌 Pinned" : "Not pinned"}
-        </Text>
+        {/* Status row + Share */}
+        <View
+          style={{
+            marginTop: 6,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <Text style={{ color: Colors.muted }}>
+            {card.pinned ? "📌 Pinned" : "Not pinned"}
+          </Text>
+
+          <Pressable
+            onPress={onShare}
+            android_ripple={{ color: "#00000010" }}
+            style={{
+              paddingVertical: 8,
+              paddingHorizontal: 12,
+              borderRadius: 12,
+              backgroundColor: (Colors as any).lightAccent ?? "#DBEAFE",
+              overflow: "hidden",
+              borderWidth: 1,
+              borderColor: "#00000010",
+            }}
+          >
+            <Text style={{ color: Colors.deep, fontWeight: "900" }}>Share</Text>
+          </Pressable>
+        </View>
 
         {/* Add Clip (inline) */}
         <View
@@ -373,9 +457,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
                   </Text>
 
                   {isLink ? (
-                    <Text style={{ marginTop: 6, color: Colors.muted }}>
-                      Tap to open
-                    </Text>
+                    <Text style={{ marginTop: 6, color: Colors.muted }}>Tap to open</Text>
                   ) : null}
 
                   <View

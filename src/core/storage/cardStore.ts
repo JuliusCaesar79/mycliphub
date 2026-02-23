@@ -18,19 +18,34 @@ type CardState = {
   cards: Card[];
   clipItemsByCardId: Record<string, ClipItem[]>;
 
+  /**
+   * STEP 16 — Search Globale Perfetta
+   * Index in-memory: titolo + clip text (lowercased)
+   * Così Inbox Search può filtrare senza roundtrip su SQLite.
+   */
+  searchBlobByCardId: Record<string, string>;
+
   loadFromDB: () => Promise<void>;
-  loadClips: (cardId: string) => Promise<void>;
+  loadClips: (cardId: string) => Promise<void>; // resta compatibile (detail), ma ora spesso è no-op
 
   createCard: (title?: string) => Promise<string>;
 
   togglePin: (id: string) => Promise<void>;
   archiveCard: (id: string) => Promise<void>;
+  restoreCard: (id: string) => Promise<void>;
+  deleteCard: (id: string) => Promise<void>;
   renameCard: (id: string, newTitle: string) => Promise<void>;
 
   addClipItem: (cardId: string, text: string) => Promise<void>;
   removeClipItem: (cardId: string, clipId: string) => Promise<void>;
 
   getClipItems: (cardId: string) => ClipItem[];
+
+  /**
+   * Utility per UI Search: match rapido su indice.
+   * (Non rompe nulla se non la usi subito)
+   */
+  matchesQuery: (cardId: string, query: string) => boolean;
 };
 
 const looksLikeUrl = (value: string) => {
@@ -52,31 +67,104 @@ const sortCards = (cards: Card[]) => {
   });
 };
 
+const normForSearch = (value: string) =>
+  (value ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+const buildSearchBlob = (title: string, clips: ClipItem[]) => {
+  const parts: string[] = [];
+  const t = normForSearch(title);
+  if (t) parts.push(t);
+
+  for (const c of clips) {
+    const tx = normForSearch(c.text);
+    if (tx) parts.push(tx);
+  }
+
+  // Unico stringone: veloce da "includes"
+  return parts.join(" • ");
+};
+
 export const useCardStore = create<CardState>((set, get) => ({
   cards: [],
   clipItemsByCardId: {},
+  searchBlobByCardId: {},
 
+  /**
+   * STEP 16:
+   * - carica cards
+   * - carica TUTTI i clip al boot (anche per card mai aperte)
+   * - costruisce indice searchBlobByCardId
+   *
+   * Nota: qui facciamo N query (una per card) usando getByCardId,
+   * perché non assumiamo l’esistenza di ClipRepository.getAll().
+   * STEP 19 potrà ottimizzare con una query unica.
+   */
   loadFromDB: async () => {
     const cards = await CardRepository.getAll();
     sortCards(cards);
 
-    set((state) => {
-      const nextMap = { ...state.clipItemsByCardId };
-      for (const c of cards) {
-        if (!nextMap[c.id]) nextMap[c.id] = [];
-      }
-      return { cards, clipItemsByCardId: nextMap };
-    });
+    // Prepara map vuote per stabilità
+    const baseClipMap: Record<string, ClipItem[]> = {};
+    const baseSearchMap: Record<string, string> = {};
+    for (const c of cards) {
+      baseClipMap[c.id] = [];
+      baseSearchMap[c.id] = buildSearchBlob(c.title, []);
+    }
+
+    // Caricamento globale clip (best-effort, anche se una card fallisce)
+    const results = await Promise.all(
+      cards.map(async (c) => {
+        try {
+          const clips = await ClipRepository.getByCardId(c.id);
+          return { cardId: c.id, clips };
+        } catch {
+          return { cardId: c.id, clips: [] as ClipItem[] };
+        }
+      })
+    );
+
+    for (const r of results) {
+      baseClipMap[r.cardId] = r.clips;
+      const card = cards.find((x) => x.id === r.cardId);
+      baseSearchMap[r.cardId] = buildSearchBlob(card?.title ?? "", r.clips);
+    }
+
+    set(() => ({
+      cards,
+      clipItemsByCardId: baseClipMap,
+      searchBlobByCardId: baseSearchMap,
+    }));
   },
 
+  /**
+   * Compatibilità: CardDetail può chiamarlo sempre.
+   * Se già abbiamo i clip (boot globale), evitiamo roundtrip.
+   * Se per qualsiasi motivo manca la card, facciamo fetch.
+   */
   loadClips: async (cardId: string) => {
+    const existing = get().clipItemsByCardId[cardId];
+    if (existing && existing.length > 0) return;
+
     const clips = await ClipRepository.getByCardId(cardId);
-    set((state) => ({
-      clipItemsByCardId: {
-        ...state.clipItemsByCardId,
-        [cardId]: clips,
-      },
-    }));
+
+    set((state) => {
+      const card = state.cards.find((c) => c.id === cardId);
+      const nextSearch = buildSearchBlob(card?.title ?? "", clips);
+
+      return {
+        clipItemsByCardId: {
+          ...state.clipItemsByCardId,
+          [cardId]: clips,
+        },
+        searchBlobByCardId: {
+          ...state.searchBlobByCardId,
+          [cardId]: nextSearch,
+        },
+      };
+    });
   },
 
   createCard: async (title) => {
@@ -99,6 +187,10 @@ export const useCardStore = create<CardState>((set, get) => ({
       clipItemsByCardId: {
         ...state.clipItemsByCardId,
         [id]: state.clipItemsByCardId[id] ?? [],
+      },
+      searchBlobByCardId: {
+        ...state.searchBlobByCardId,
+        [id]: buildSearchBlob(card.title, state.clipItemsByCardId[id] ?? []),
       },
     }));
 
@@ -129,6 +221,11 @@ export const useCardStore = create<CardState>((set, get) => ({
   },
 
   archiveCard: async (id) => {
+    const state = get();
+    const card = state.cards.find((c) => c.id === id);
+    if (!card) return;
+    if (card.archived) return;
+
     const now = Date.now();
 
     await CardRepository.updateFields(id, {
@@ -136,11 +233,63 @@ export const useCardStore = create<CardState>((set, get) => ({
       updatedAt: now,
     });
 
-    set((s) => ({
-      cards: s.cards.map((c) =>
+    set((s) => {
+      const nextCards = s.cards.map((c) =>
         c.id === id ? { ...c, archived: true, updatedAt: now } : c
-      ),
-    }));
+      );
+      sortCards(nextCards);
+      return { cards: nextCards };
+    });
+  },
+
+  restoreCard: async (id) => {
+    const state = get();
+    const card = state.cards.find((c) => c.id === id);
+    if (!card) return;
+    if (!card.archived) return;
+
+    const now = Date.now();
+
+    await CardRepository.updateFields(id, {
+      archived: false,
+      updatedAt: now,
+    });
+
+    set((s) => {
+      const nextCards = s.cards.map((c) =>
+        c.id === id ? { ...c, archived: false, updatedAt: now } : c
+      );
+      sortCards(nextCards);
+      return { cards: nextCards };
+    });
+  },
+
+  deleteCard: async (id) => {
+    const state = get();
+    const card = state.cards.find((c) => c.id === id);
+    if (!card) return;
+
+    // DB: delete children first (avoid orphans)
+    await ClipRepository.deleteByCardId(id);
+    await CardRepository.deleteById(id);
+
+    set((s) => {
+      const nextCards = s.cards.filter((c) => c.id !== id);
+
+      const nextClips = { ...s.clipItemsByCardId };
+      if (nextClips[id]) delete nextClips[id];
+
+      const nextSearch = { ...s.searchBlobByCardId };
+      if (nextSearch[id]) delete nextSearch[id];
+
+      sortCards(nextCards);
+
+      return {
+        cards: nextCards,
+        clipItemsByCardId: nextClips,
+        searchBlobByCardId: nextSearch,
+      };
+    });
   },
 
   renameCard: async (id, newTitle) => {
@@ -163,9 +312,18 @@ export const useCardStore = create<CardState>((set, get) => ({
       const nextCards = s.cards.map((c) =>
         c.id === id ? { ...c, title: nextTitle, updatedAt: now } : c
       );
-
       sortCards(nextCards);
-      return { cards: nextCards };
+
+      const clips = s.clipItemsByCardId[id] ?? [];
+      const nextBlob = buildSearchBlob(nextTitle, clips);
+
+      return {
+        cards: nextCards,
+        searchBlobByCardId: {
+          ...s.searchBlobByCardId,
+          [id]: nextBlob,
+        },
+      };
     });
   },
 
@@ -177,7 +335,7 @@ export const useCardStore = create<CardState>((set, get) => ({
     const normalizedText = isLink ? normalizeUrl(trimmed) : trimmed;
     const nextType: ClipItemType = isLink ? "link" : "text";
 
-    // ✅ STEP 14.3 — Dedup identico nella stessa card (no DB write)
+    // ✅ Dedup identico nella stessa card (no DB write)
     const existing = get().clipItemsByCardId[cardId] ?? [];
     const alreadyThere = existing.some(
       (c) => c.type === nextType && c.text === normalizedText
@@ -199,14 +357,26 @@ export const useCardStore = create<CardState>((set, get) => ({
 
     set((state) => {
       const current = state.clipItemsByCardId[cardId] ?? [];
+      const nextClips = [clip, ...current];
+
+      const nextCards = state.cards.map((c) =>
+        c.id === cardId ? { ...c, updatedAt: now } : c
+      );
+      sortCards(nextCards);
+
+      const card = nextCards.find((c) => c.id === cardId);
+      const nextBlob = buildSearchBlob(card?.title ?? "", nextClips);
+
       return {
         clipItemsByCardId: {
           ...state.clipItemsByCardId,
-          [cardId]: [clip, ...current],
+          [cardId]: nextClips,
         },
-        cards: state.cards.map((c) =>
-          c.id === cardId ? { ...c, updatedAt: now } : c
-        ),
+        searchBlobByCardId: {
+          ...state.searchBlobByCardId,
+          [cardId]: nextBlob,
+        },
+        cards: nextCards,
       };
     });
   },
@@ -218,10 +388,17 @@ export const useCardStore = create<CardState>((set, get) => ({
       const current = state.clipItemsByCardId[cardId] ?? [];
       const next = current.filter((x) => x.id !== clipId);
 
+      const card = state.cards.find((c) => c.id === cardId);
+      const nextBlob = buildSearchBlob(card?.title ?? "", next);
+
       return {
         clipItemsByCardId: {
           ...state.clipItemsByCardId,
           [cardId]: next,
+        },
+        searchBlobByCardId: {
+          ...state.searchBlobByCardId,
+          [cardId]: nextBlob,
         },
       };
     });
@@ -230,5 +407,13 @@ export const useCardStore = create<CardState>((set, get) => ({
   getClipItems: (cardId) => {
     const map = get().clipItemsByCardId;
     return map[cardId] ?? [];
+  },
+
+  matchesQuery: (cardId, query) => {
+    const q = normForSearch(query);
+    if (!q) return true;
+
+    const blob = get().searchBlobByCardId[cardId] ?? "";
+    return blob.includes(q);
   },
 }));

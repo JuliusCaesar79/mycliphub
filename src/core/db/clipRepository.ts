@@ -10,13 +10,7 @@ export const ClipRepository = {
       INSERT INTO clip_items (id, card_id, type, text, created_at)
       VALUES (?, ?, ?, ?, ?);
       `,
-      [
-        clip.id,
-        clip.cardId,
-        clip.type,
-        clip.text,
-        clip.createdAt,
-      ]
+      [clip.id, clip.cardId, clip.type, clip.text, clip.createdAt]
     );
   },
 
@@ -25,7 +19,8 @@ export const ClipRepository = {
 
     const [result] = await db.executeSql(
       `
-      SELECT * FROM clip_items
+      SELECT id, card_id, type, text, created_at
+      FROM clip_items
       WHERE card_id = ?
       ORDER BY created_at DESC;
       `,
@@ -39,11 +34,11 @@ export const ClipRepository = {
       const item = rows.item(i);
 
       clips.push({
-        id: item.id,
-        cardId: item.card_id,
+        id: String(item.id),
+        cardId: String(item.card_id),
         type: item.type,
-        text: item.text,
-        createdAt: item.created_at,
+        text: String(item.text ?? ""),
+        createdAt: Number(item.created_at ?? 0),
       });
     }
 
@@ -54,4 +49,37 @@ export const ClipRepository = {
     const db = await getDB();
     await db.executeSql(`DELETE FROM clip_items WHERE id = ?;`, [id]);
   },
+
+  async deleteByCardId(cardId: string) {
+    const db = await getDB();
+    await db.executeSql(`DELETE FROM clip_items WHERE card_id = ?;`, [cardId]);
+  },
+
+  // STEP 19 (opzionale): una query unica per caricare tutti i clip
+  // async getAll(): Promise<ClipItem[]> {
+  //   const db = await getDB();
+  //   const [result] = await db.executeSql(
+  //     `
+  //     SELECT id, card_id, type, text, created_at
+  //     FROM clip_items
+  //     ORDER BY created_at DESC;
+  //     `
+  //   );
+  //
+  //   const rows = result.rows;
+  //   const clips: ClipItem[] = [];
+  //
+  //   for (let i = 0; i < rows.length; i++) {
+  //     const item = rows.item(i);
+  //     clips.push({
+  //       id: String(item.id),
+  //       cardId: String(item.card_id),
+  //       type: item.type,
+  //       text: String(item.text ?? ""),
+  //       createdAt: Number(item.created_at ?? 0),
+  //     });
+  //   }
+  //
+  //   return clips;
+  // },
 };

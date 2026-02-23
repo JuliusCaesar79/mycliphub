@@ -1,9 +1,11 @@
 import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
+
 import InboxScreen from "../../features/inbox/InboxScreen";
 import CardDetailScreen from "../../features/card/CardDetailScreen";
 import SettingsScreen from "../../features/settings/SettingsScreen";
+
 import { Colors } from "../theme";
 import { navigationRef } from "../navigationRef";
 
@@ -38,9 +40,7 @@ export default function AppNavigator() {
         <Stack.Screen
           name="CardDetail"
           component={CardDetailScreen}
-          options={{
-            title: "Card",
-          }}
+          options={{ title: "Card" }}
         />
 
         <Stack.Screen

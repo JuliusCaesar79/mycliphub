@@ -1,4 +1,6 @@
 import React, { useEffect } from "react";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+
 import AppNavigator from "./src/app/navigation";
 import { initSchema } from "./src/core/db/schema";
 import { useCardStore } from "./src/core/storage/cardStore";
@@ -19,5 +21,9 @@ export default function App() {
     })();
   }, []);
 
-  return <AppNavigator />;
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AppNavigator />
+    </GestureHandlerRootView>
+  );
 }
