@@ -11,6 +11,22 @@ export function navToCardDetail(cardId: string) {
   navigationRef.navigate("CardDetail", { cardId });
 }
 
+// STEP 18 — Agenda
+export function navToAgenda() {
+  if (!navigationRef.isReady()) return;
+  navigationRef.navigate("Agenda");
+}
+
+export function getActiveRouteName(): keyof RootStackParamList | null {
+  if (!navigationRef.isReady()) return null;
+  const route = navigationRef.getCurrentRoute();
+  return (route?.name as keyof RootStackParamList) ?? null;
+}
+
+export function isOnAgenda(): boolean {
+  return getActiveRouteName() === "Agenda";
+}
+
 export function getActiveCardDetailId(): string | null {
   if (!navigationRef.isReady()) return null;
 

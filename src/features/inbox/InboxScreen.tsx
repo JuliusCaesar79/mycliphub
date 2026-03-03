@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useLayoutEffect,
   useMemo,
   useState,
@@ -6,7 +6,7 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import { Alert, FlatList, Pressable, Text, View, TextInput } from "react-native";
+import { Alert, FlatList, Pressable, Text, View, TextInput, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Swipeable } from "react-native-gesture-handler";
@@ -14,6 +14,12 @@ import { Swipeable } from "react-native-gesture-handler";
 import { Colors } from "../../app/theme";
 import { useCardStore } from "../../core/storage/cardStore";
 import { RootStackParamList } from "../../app/navigation";
+
+import Icon from "../../ui/Icon";
+import ButtonPrimary from "../../ui/ButtonPrimary";
+import ButtonSecondary from "../../ui/ButtonSecondary";
+import Badge from "../../ui/Badge";
+import CardContainer from "../../ui/CardContainer";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Inbox">;
 
@@ -72,52 +78,31 @@ function Segmented({
 }) {
   const isInbox = value === "inbox";
   return (
-    <View
-      style={{
-        flexDirection: "row",
-        backgroundColor: "#00000008",
-        padding: 4,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: "#00000010",
-      }}
-    >
+    <View style={styles.segmentedWrap}>
       <Pressable
         onPress={() => onChange("inbox")}
         android_ripple={{ color: "#00000010" }}
-        style={{
-          flex: 1,
-          paddingVertical: 8,
-          borderRadius: 12,
-          overflow: "hidden",
-          backgroundColor: isInbox ? Colors.white : "transparent",
-          borderWidth: isInbox ? 1 : 0,
-          borderColor: isInbox ? "#00000010" : "transparent",
-          alignItems: "center",
-        }}
+        style={[
+          styles.segmentItem,
+          isInbox && styles.segmentItemActive,
+        ]}
         accessibilityRole="button"
         accessibilityLabel="Show Inbox"
       >
-        <Text style={{ fontWeight: "800", color: Colors.deep }}>Inbox</Text>
+        <Text style={styles.segmentText}>Inbox</Text>
       </Pressable>
 
       <Pressable
         onPress={() => onChange("archive")}
         android_ripple={{ color: "#00000010" }}
-        style={{
-          flex: 1,
-          paddingVertical: 8,
-          borderRadius: 12,
-          overflow: "hidden",
-          backgroundColor: !isInbox ? Colors.white : "transparent",
-          borderWidth: !isInbox ? 1 : 0,
-          borderColor: !isInbox ? "#00000010" : "transparent",
-          alignItems: "center",
-        }}
+        style={[
+          styles.segmentItem,
+          !isInbox && styles.segmentItemActive,
+        ]}
         accessibilityRole="button"
         accessibilityLabel="Show Archive"
       >
-        <Text style={{ fontWeight: "800", color: Colors.deep }}>Archive</Text>
+        <Text style={styles.segmentText}>Archive</Text>
       </Pressable>
     </View>
   );
@@ -130,7 +115,7 @@ function normalizeQuery(q: string) {
 function SwipeAction({
   title,
   subtitle,
-  emoji,
+  icon,
   bg,
   fg,
   onPress,
@@ -138,7 +123,7 @@ function SwipeAction({
 }: {
   title: string;
   subtitle: string;
-  emoji: string;
+  icon: React.ReactNode;
   bg: string;
   fg: string;
   onPress: () => void;
@@ -148,25 +133,21 @@ function SwipeAction({
     <Pressable
       onPress={onPress}
       android_ripple={{ color: "#00000010" }}
-      style={{
-        width: 160,
-        height: "100%",
-        backgroundColor: bg,
-        justifyContent: "center",
-        paddingHorizontal: 14,
-        borderRadius: 16,
-        overflow: "hidden",
-        borderWidth: 1,
-        borderColor: "#00000010",
-        alignItems: align === "right" ? "flex-end" : "flex-start",
-      }}
+      style={[
+        styles.swipeAction,
+        {
+          backgroundColor: bg,
+          alignItems: align === "right" ? "flex-end" : "flex-start",
+        },
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={title}
     >
-      <Text style={{ color: fg, fontWeight: "900", fontSize: 14 }}>
-        {emoji} {title}
-      </Text>
-      <Text style={{ marginTop: 2, color: fg, opacity: 0.85, fontSize: 12 }}>
-        {subtitle}
-      </Text>
+      <View style={styles.swipeActionTitleRow}>
+        {icon}
+        <Text style={[styles.swipeActionTitle, { color: fg }]}>{title}</Text>
+      </View>
+      <Text style={[styles.swipeActionSubtitle, { color: fg }]}>{subtitle}</Text>
     </Pressable>
   );
 }
@@ -197,18 +178,18 @@ function CardRow({
   onDelete,
 }: CardRowProps) {
   const swipeRef = useRef<Swipeable | null>(null);
-
   const close = () => swipeRef.current?.close();
 
   const renderLeftActions = () => {
     // Swipe RIGHT
     if (tab === "inbox") {
+      const title = item.pinned ? "Unpin" : "Pin";
       return (
-        <View style={{ justifyContent: "center", paddingRight: 10 }}>
+        <View style={styles.swipeLeftWrap}>
           <SwipeAction
-            emoji="📌"
-            title={item.pinned ? "Unpin" : "Pin"}
+            title={title}
             subtitle="Swipe right"
+            icon={<Icon name="bookmark-outline" size={18} color={Colors.deep} />}
             bg={(Colors as any).lightAccent ?? "#DBEAFE"}
             fg={Colors.deep}
             onPress={() => {
@@ -222,11 +203,11 @@ function CardRow({
     }
 
     return (
-      <View style={{ justifyContent: "center", paddingRight: 10 }}>
+      <View style={styles.swipeLeftWrap}>
         <SwipeAction
-          emoji="↩️"
           title="Restore"
           subtitle="Swipe right"
+          icon={<Icon name="arrow-undo-outline" size={18} color={Colors.deep} />}
           bg={(Colors as any).lightAccent ?? "#DBEAFE"}
           fg={Colors.deep}
           onPress={() => {
@@ -243,11 +224,11 @@ function CardRow({
     // Swipe LEFT
     if (tab === "inbox") {
       return (
-        <View style={{ justifyContent: "center", paddingLeft: 10, alignItems: "flex-end" }}>
+        <View style={styles.swipeRightWrap}>
           <SwipeAction
-            emoji="🗄️"
             title="Archive"
             subtitle="Swipe left"
+            icon={<Icon name="archive-outline" size={18} color={Colors.deep} />}
             bg="#00000008"
             fg={Colors.deep}
             onPress={() => {
@@ -261,11 +242,11 @@ function CardRow({
     }
 
     return (
-      <View style={{ justifyContent: "center", paddingLeft: 10, alignItems: "flex-end" }}>
+      <View style={styles.swipeRightWrap}>
         <SwipeAction
-          emoji="🗑️"
           title="Delete"
           subtitle="Swipe left"
+          icon={<Icon name="trash-outline" size={18} color="#7F1D1D" />}
           bg="#FFE4E6"
           fg="#7F1D1D"
           onPress={() => {
@@ -281,7 +262,7 @@ function CardRow({
   const isInbox = tab === "inbox";
 
   return (
-    <View style={{ marginBottom: 12 }}>
+    <View style={styles.rowOuter}>
       <Swipeable
         ref={(r) => {
           swipeRef.current = r;
@@ -294,143 +275,85 @@ function CardRow({
         renderLeftActions={renderLeftActions}
         renderRightActions={renderRightActions}
       >
-        <Pressable
-          onPress={onOpen}
-          android_ripple={{ color: "#00000008" }}
-          style={{
-            backgroundColor: Colors.white,
-            borderRadius: 16,
-            padding: 14,
-            borderWidth: 1,
-            borderColor: "#00000010",
-            opacity: !isInbox ? 0.96 : 1,
-          }}
-        >
-          {/* Title Row */}
-          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
-            <Text style={{ fontSize: 16, fontWeight: "800", color: Colors.deep }}>
-              {item.title} {item.pinned ? "📌" : ""}
-            </Text>
+        <CardContainer style={[styles.cardShell, !isInbox && styles.cardShellArchived]}>
+          <Pressable
+            onPress={onOpen}
+            android_ripple={{ color: "#00000008" }}
+            style={styles.cardPressable}
+            accessibilityRole="button"
+            accessibilityLabel="Open card"
+          >
+            {/* Title Row */}
+            <View style={styles.titleRow}>
+              <Text style={styles.title}>{item.title}</Text>
 
-            {isShared && (
-              <View
-                style={{
-                  marginLeft: 8,
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                  borderRadius: 999,
-                  backgroundColor: "#E6F0FF",
-                  borderWidth: 1,
-                  borderColor: "#D0E2FF",
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 10,
-                    fontWeight: "700",
-                    color: "#1D4ED8",
-                    letterSpacing: 0.3,
-                  }}
-                >
-                  SHARED
-                </Text>
-              </View>
+              {item.pinned ? (
+                <View style={styles.titleIcon}>
+                  <Icon name="bookmark-outline" size={16} color={Colors.deep} />
+                </View>
+              ) : null}
+
+              {isShared && (
+                <View style={styles.badgeWrap}>
+                  <Badge label="SHARED" tone="primary" variant="soft" />
+                </View>
+              )}
+
+              {!isInbox && (
+                <View style={styles.badgeWrap}>
+                  <Badge label="ARCHIVED" tone="muted" variant="soft" />
+                </View>
+              )}
+            </View>
+
+            {!!shownMs && (
+              <Text style={styles.meta}>
+                {label} {formatDateTime(shownMs)}
+              </Text>
             )}
 
-            {!isInbox && (
-              <View
-                style={{
-                  marginLeft: 8,
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                  borderRadius: 999,
-                  backgroundColor: "#00000006",
-                  borderWidth: 1,
-                  borderColor: "#00000010",
-                }}
-              >
-                <Text style={{ fontSize: 10, fontWeight: "700", color: "#00000088" }}>
-                  ARCHIVED
-                </Text>
-              </View>
-            )}
-          </View>
+            {/* Buttons (kept for stability; Swipe is premium shortcut) */}
+            <View style={styles.actionsRow}>
+              {isInbox ? (
+                <>
+                  <ButtonSecondary
+                    title={item.pinned ? "Unpin" : "Pin"}
+                    icon="bookmark-outline"
+                    onPress={onTogglePin}
+                    style={styles.actionBtn}
+                  />
+                  <ButtonSecondary
+                    title="Archive"
+                    icon="archive-outline"
+                    onPress={onArchive}
+                    style={styles.actionBtn}
+                  />
+                </>
+              ) : (
+                <>
+                  <ButtonSecondary
+                    title="Restore"
+                    icon="arrow-undo-outline"
+                    onPress={onRestore}
+                    style={styles.actionBtn}
+                  />
 
-          {!!shownMs && (
-            <Text style={{ marginTop: 6, fontSize: 12, color: "#00000066" }}>
-              {label} {formatDateTime(shownMs)}
-            </Text>
-          )}
-
-          {/* Buttons (kept for stability; Swipe is premium shortcut) */}
-          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-            {isInbox ? (
-              <>
-                <Pressable
-                  onPress={onTogglePin}
-                  android_ripple={{ color: "#00000010" }}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
-                    backgroundColor: (Colors as any).lightAccent ?? "#DBEAFE",
-                    overflow: "hidden",
-                  }}
-                >
-                  <Text style={{ color: Colors.deep, fontWeight: "700" }}>
-                    {item.pinned ? "Unpin" : "Pin"}
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={onArchive}
-                  android_ripple={{ color: "#00000010" }}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
-                    backgroundColor: "#00000008",
-                    overflow: "hidden",
-                  }}
-                >
-                  <Text style={{ color: Colors.deep, fontWeight: "700" }}>Archive</Text>
-                </Pressable>
-              </>
-            ) : (
-              <>
-                <Pressable
-                  onPress={onRestore}
-                  android_ripple={{ color: "#00000010" }}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
-                    backgroundColor: (Colors as any).lightAccent ?? "#DBEAFE",
-                    overflow: "hidden",
-                  }}
-                >
-                  <Text style={{ color: Colors.deep, fontWeight: "700" }}>Restore</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={onDelete}
-                  android_ripple={{ color: "#00000010" }}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
-                    backgroundColor: "#FFE4E6",
-                    overflow: "hidden",
-                    borderWidth: 1,
-                    borderColor: "#FFCDD2",
-                  }}
-                >
-                  <Text style={{ color: "#7F1D1D", fontWeight: "800" }}>Delete</Text>
-                </Pressable>
-              </>
-            )}
-          </View>
-        </Pressable>
+                  {/* Destructive (kept explicit to avoid accidental “primary-colored delete”) */}
+                  <Pressable
+                    onPress={onDelete}
+                    android_ripple={{ color: "#00000010" }}
+                    style={styles.deleteBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel="Delete card"
+                  >
+                    <Icon name="trash-outline" size={18} color="#7F1D1D" />
+                    <Text style={styles.deleteText}>Delete</Text>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          </Pressable>
+        </CardContainer>
       </Swipeable>
     </View>
   );
@@ -475,19 +398,11 @@ export default function InboxScreen({ navigation }: Props) {
         <Pressable
           onPress={() => navigation.navigate("Settings")}
           android_ripple={{ color: "#00000010", borderless: true }}
-          style={{
-            paddingHorizontal: 10,
-            paddingVertical: 6,
-            borderRadius: 12,
-            overflow: "hidden",
-            backgroundColor: "#00000008",
-          }}
+          style={styles.headerIconBtn}
           accessibilityRole="button"
           accessibilityLabel="Open settings"
         >
-          <Text style={{ color: Colors.deep, fontWeight: "800", fontSize: 14 }}>
-            ⚙️
-          </Text>
+          <Icon name="settings-outline" size={20} color={Colors.deep} />
         </Pressable>
       ),
     });
@@ -548,65 +463,40 @@ export default function InboxScreen({ navigation }: Props) {
 
     if (isSearching) {
       return (
-        <View style={{ marginTop: 56, alignItems: "center", paddingHorizontal: 18 }}>
-          <Text style={{ fontSize: 34, marginBottom: 10 }}>🔎</Text>
+        <View style={styles.emptyWrap}>
+          <Icon name="search-outline" size={34} color={Colors.deep} />
 
-          <Text style={{ fontSize: 20, fontWeight: "800", color: Colors.deep }}>
-            No results
-          </Text>
+          <Text style={styles.emptyTitle}>No results</Text>
 
-          <Text
-            style={{
-              marginTop: 10,
-              color: Colors.primary,
-              textAlign: "center",
-              lineHeight: 20,
-            }}
-          >
+          <Text style={styles.emptyText}>
             Try a different keyword.
             {"\n"}We search in card titles and clips.
           </Text>
 
-          <Pressable
-            onPress={() => setQuery("")}
-            android_ripple={{ color: "#00000010" }}
-            style={{
-              marginTop: 16,
-              paddingVertical: 10,
-              paddingHorizontal: 14,
-              borderRadius: 14,
-              backgroundColor: (Colors as any).lightAccent ?? "#DBEAFE",
-              overflow: "hidden",
-              borderWidth: 1,
-              borderColor: "#00000010",
-            }}
-          >
-            <Text style={{ color: Colors.deep, fontWeight: "800" }}>
-              Clear search
-            </Text>
-          </Pressable>
+          <View style={{ marginTop: 16 }}>
+            <ButtonSecondary
+              title="Clear search"
+              icon="close-circle-outline"
+              onPress={() => setQuery("")}
+            />
+          </View>
         </View>
       );
     }
 
     return (
-      <View style={{ marginTop: 56, alignItems: "center", paddingHorizontal: 18 }}>
-        <Text style={{ fontSize: 34, marginBottom: 10 }}>
-          {isInbox ? "🗂️" : "🗄️"}
-        </Text>
+      <View style={styles.emptyWrap}>
+        <Icon
+          name={isInbox ? "albums-outline" : "archive-outline"}
+          size={34}
+          color={Colors.deep}
+        />
 
-        <Text style={{ fontSize: 20, fontWeight: "800", color: Colors.deep }}>
+        <Text style={styles.emptyTitle}>
           {isInbox ? "Your Inbox is empty" : "Archive is empty"}
         </Text>
 
-        <Text
-          style={{
-            marginTop: 10,
-            color: Colors.primary,
-            textAlign: "center",
-            lineHeight: 20,
-          }}
-        >
+        <Text style={styles.emptyText}>
           {isInbox ? (
             <>
               Create a card to start collecting notes and links.
@@ -621,24 +511,13 @@ export default function InboxScreen({ navigation }: Props) {
         </Text>
 
         {isInbox && (
-          <Pressable
-            onPress={() => createCard("New Card")}
-            android_ripple={{ color: "#00000010" }}
-            style={{
-              marginTop: 16,
-              paddingVertical: 10,
-              paddingHorizontal: 14,
-              borderRadius: 14,
-              backgroundColor: (Colors as any).lightAccent ?? "#DBEAFE",
-              overflow: "hidden",
-              borderWidth: 1,
-              borderColor: "#00000010",
-            }}
-          >
-            <Text style={{ color: Colors.deep, fontWeight: "800" }}>
-              Create card
-            </Text>
-          </Pressable>
+          <View style={{ marginTop: 16 }}>
+            <ButtonPrimary
+              title="Create card"
+              icon="add-outline"
+              onPress={() => createCard("New Card")}
+            />
+          </View>
         )}
       </View>
     );
@@ -665,36 +544,19 @@ export default function InboxScreen({ navigation }: Props) {
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
       {/* Top controls */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+      <View style={styles.topControls}>
         <Segmented value={tab} onChange={setTab} />
 
         {/* Search bar */}
-        <View
-          style={{
-            marginTop: 12,
-            backgroundColor: Colors.white,
-            borderRadius: 16,
-            borderWidth: 1,
-            borderColor: "#00000010",
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <Text style={{ fontSize: 16 }}>🔎</Text>
+        <View style={styles.searchBar}>
+          <Icon name="search-outline" size={18} color={Colors.deep} />
 
           <TextInput
             value={query}
             onChangeText={setQuery}
             placeholder={`Search in ${tab === "inbox" ? "Inbox" : "Archive"}…`}
             placeholderTextColor={Colors.muted}
-            style={{
-              flex: 1,
-              color: Colors.deep,
-              paddingVertical: 0,
-            }}
+            style={styles.searchInput}
             autoCorrect={false}
             autoCapitalize="none"
             returnKeyType="search"
@@ -704,28 +566,18 @@ export default function InboxScreen({ navigation }: Props) {
             <Pressable
               onPress={() => setQuery("")}
               android_ripple={{ color: "#00000010", borderless: true }}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 16,
-                alignItems: "center",
-                justifyContent: "center",
-                overflow: "hidden",
-                backgroundColor: "#00000006",
-                borderWidth: 1,
-                borderColor: "#00000010",
-              }}
+              style={styles.clearSearchBtn}
               accessibilityRole="button"
               accessibilityLabel="Clear search"
             >
-              <Text style={{ color: Colors.deep, fontWeight: "900" }}>×</Text>
+              <Icon name="close-circle" size={18} color={Colors.deep} />
             </Pressable>
           )}
         </View>
       </View>
 
       <FlatList
-        contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+        contentContainerStyle={styles.listContent}
         data={filteredData}
         keyExtractor={(item) => item.id}
         ListEmptyComponent={<EmptyState />}
@@ -751,9 +603,7 @@ export default function InboxScreen({ navigation }: Props) {
               onTogglePin={() => togglePin(item.id)}
               onArchive={() => archiveCard(item.id)}
               onRestore={() => restoreCard(item.id)}
-              onDelete={() =>
-                confirmDelete(item.id, String(item.title ?? "Untitled"))
-              }
+              onDelete={() => confirmDelete(item.id, String(item.title ?? "Untitled"))}
             />
           );
         }}
@@ -764,28 +614,234 @@ export default function InboxScreen({ navigation }: Props) {
         <Pressable
           onPress={() => createCard("New Card")}
           android_ripple={{ color: "#ffffff33" }}
-          style={{
-            position: "absolute",
-            right: 18,
-            bottom: 18 + insets.bottom,
-            width: 60,
-            height: 60,
-            borderRadius: 30,
-            backgroundColor: Colors.accent,
-            justifyContent: "center",
-            alignItems: "center",
-            shadowColor: "#000",
-            shadowOpacity: 0.2,
-            shadowRadius: 8,
-            elevation: 6,
-            overflow: "hidden",
-          }}
+          style={[
+            styles.fab,
+            {
+              bottom: 18 + insets.bottom,
+            },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Create new card"
         >
-          <Text style={{ color: Colors.white, fontSize: 28, fontWeight: "900" }}>
-            +
-          </Text>
+          <Icon name="add" size={28} color={Colors.white} />
         </Pressable>
       )}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  // Segmented
+  segmentedWrap: {
+    flexDirection: "row",
+    backgroundColor: "#00000008",
+    padding: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#00000010",
+  },
+  segmentItem: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    borderColor: "transparent",
+    alignItems: "center",
+  },
+  segmentItemActive: {
+    backgroundColor: Colors.white,
+    borderWidth: 1,
+    borderColor: "#00000010",
+  },
+  segmentText: {
+    fontWeight: "800",
+    color: Colors.deep,
+  },
+
+  // Header
+  headerIconBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#00000008",
+  },
+
+  // Top controls
+  topControls: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  searchBar: {
+    marginTop: 12,
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#00000010",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  searchInput: {
+    flex: 1,
+    color: Colors.deep,
+    paddingVertical: 0,
+  },
+  clearSearchBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    backgroundColor: "#00000006",
+    borderWidth: 1,
+    borderColor: "#00000010",
+  },
+
+  // List
+  listContent: {
+    padding: 16,
+    paddingBottom: 120,
+  },
+
+  // Empty states
+  emptyWrap: {
+    marginTop: 56,
+    alignItems: "center",
+    paddingHorizontal: 18,
+  },
+  emptyTitle: {
+    marginTop: 10,
+    fontSize: 20,
+    fontWeight: "800",
+    color: Colors.deep,
+  },
+  emptyText: {
+    marginTop: 10,
+    color: Colors.primary,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+
+  // Swipe wrappers
+  swipeLeftWrap: {
+    justifyContent: "center",
+    paddingRight: 10,
+  },
+  swipeRightWrap: {
+    justifyContent: "center",
+    paddingLeft: 10,
+    alignItems: "flex-end",
+  },
+  swipeAction: {
+    width: 160,
+    height: "100%",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#00000010",
+  },
+  swipeActionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  swipeActionTitle: {
+    fontWeight: "900",
+    fontSize: 14,
+  },
+  swipeActionSubtitle: {
+    marginTop: 2,
+    opacity: 0.85,
+    fontSize: 12,
+  },
+
+  // Card row
+  rowOuter: {
+    marginBottom: 12,
+  },
+  cardShell: {
+    padding: 0,
+    overflow: "hidden",
+  },
+  cardShellArchived: {
+    opacity: 0.96,
+  },
+  cardPressable: {
+    padding: 14,
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: Colors.deep,
+  },
+  titleIcon: {
+    marginLeft: 8,
+    marginTop: 2,
+  },
+  badgeWrap: {
+    marginLeft: 8,
+    marginTop: 2,
+  },
+  meta: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#00000066",
+  },
+  actionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+    flexWrap: "wrap",
+  },
+  actionBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  deleteBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "#FFE4E6",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#FFCDD2",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  deleteText: {
+    color: "#7F1D1D",
+    fontWeight: "800",
+  },
+
+  // FAB
+  fab: {
+    position: "absolute",
+    right: 18,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: Colors.accent,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
+    overflow: "hidden",
+  },
+});

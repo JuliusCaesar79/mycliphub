@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,12 +10,19 @@ import {
   Linking,
   Alert,
   Share,
+  StyleSheet,
 } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import { RootStackParamList } from "../../app/navigation";
 import { useCardStore } from "../../core/storage/cardStore";
 import { Colors } from "../../app/theme";
+
+import Icon from "../../ui/Icon";
+import ButtonPrimary from "../../ui/ButtonPrimary";
+import ButtonSecondary from "../../ui/ButtonSecondary";
+import Badge from "../../ui/Badge";
+import CardContainer from "../../ui/CardContainer";
 
 type Props = NativeStackScreenProps<RootStackParamList, "CardDetail">;
 
@@ -25,7 +32,7 @@ function buildShareMessage(args: {
   clips: Array<{ type: string; text: string }>;
 }) {
   const title = (args.title ?? "").trim() || "Untitled";
-  const pinned = args.pinned ? " 📌" : "";
+  const pinned = args.pinned ? " [PIN]" : "";
   const header = `${title}${pinned}`;
 
   const lines =
@@ -33,12 +40,12 @@ function buildShareMessage(args: {
       ? args.clips.map((c) => {
           const t = (c?.text ?? "").trim();
           const isLink = c?.type === "link";
-          const prefix = isLink ? "🔗" : "•";
+          const prefix = isLink ? "[LINK]" : "-";
           return `${prefix} ${t}`;
         })
       : ["(No clips yet)"];
 
-  return [header, "—", ...lines].join("\n");
+  return [header, "-", ...lines].join("\n");
 }
 
 export default function CardDetailScreen({ route, navigation }: Props) {
@@ -71,6 +78,10 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   const [draftTitle, setDraftTitle] = useState("");
   const titleInputRef = useRef<TextInput>(null);
 
+  const deep = (Colors as any).deep ?? Colors.deep ?? "#0F172A";
+  const muted = (Colors as any).muted ?? Colors.muted ?? "#6B7280";
+  const lightAccent = (Colors as any).lightAccent ?? "#DBEAFE";
+
   // Keep draftTitle in sync when card changes (e.g., store refresh)
   useEffect(() => {
     if (!card) return;
@@ -88,21 +99,19 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       ? draftTitle || card.title || "Card"
       : card.title;
 
-    const title = `${baseTitle}${card.pinned ? " 📌" : ""}`;
+    const title = `${baseTitle}${card.pinned ? " [PIN]" : ""}`;
     navigation.setOptions({ title });
   }, [card?.title, card?.pinned, navigation, card, isEditingTitle, draftTitle]);
 
   /**
-   * STEP 16: i clip sono già caricati al boot.
-   * Fallback: se per qualche motivo non li abbiamo ancora in memoria, li carichiamo.
+   * STEP 16: clips are usually loaded at boot.
+   * Fallback: if we don't have them in memory yet, load them.
    */
   useEffect(() => {
-    // se già abbiamo clip (anche 0 ma mappa presente) non serve fare nulla.
-    // Qui facciamo una scelta pragmatica:
-    // - Se la lista è vuota potremmo comunque essere "vuota davvero".
-    // - Ma in quel caso loadClips è fast e idempotente (e nel cardStore evita fetch se già presenti).
-    // Quindi: chiamiamo solo se la key non esiste proprio.
-    const hasKey = Object.prototype.hasOwnProperty.call(clipItemsByCardId, cardId);
+    const hasKey = Object.prototype.hasOwnProperty.call(
+      clipItemsByCardId,
+      cardId
+    );
     if (hasKey) return;
 
     loadClips(cardId).catch((err) => {
@@ -120,19 +129,9 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   if (!card) {
     return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: Colors.background,
-          justifyContent: "center",
-          alignItems: "center",
-          padding: 16,
-        }}
-      >
-        <Text style={{ color: Colors.deep, fontWeight: "700", fontSize: 16 }}>
-          Card not found
-        </Text>
-        <Text style={{ marginTop: 8, color: Colors.muted, textAlign: "center" }}>
+      <View style={[styles.notFoundWrap, { backgroundColor: Colors.background }]}>
+        <Text style={[styles.notFoundTitle, { color: deep }]}>Card not found</Text>
+        <Text style={[styles.notFoundText, { color: muted }]}>
           This card may have been archived or deleted.
         </Text>
       </View>
@@ -192,7 +191,6 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     }
   };
 
-  // Android can be overly strict with canOpenURL for http/https.
   // For web links it's safe to try openURL directly.
   const onOpenLink = async (url: string) => {
     try {
@@ -220,54 +218,52 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     }
   };
 
+  const removeClip = useCallback(
+    async (clipId: string) => {
+      try {
+        await removeClipItem(cardId, clipId);
+      } catch (err) {
+        console.error("Failed to remove clip:", err);
+        Alert.alert("Error", "Couldn't remove this clip.");
+      }
+    },
+    [removeClipItem, cardId]
+  );
+
+  const pinnedLabel = card.pinned ? "PINNED" : "NOT PINNED";
+  const pinnedTone = card.pinned ? ("primary" as const) : ("muted" as const);
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: Colors.background }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={Platform.OS === "ios" ? 88 : 0}
     >
-      <View style={{ flex: 1, padding: 16 }}>
-        {/* Header content (in-page) */}
-        <View style={{ marginBottom: 6 }}>
+      <View style={styles.container}>
+        {/* Title / Rename */}
+        <View style={styles.topBlock}>
           {!isEditingTitle ? (
             <Pressable
               onPress={beginEditTitle}
               android_ripple={{ color: "#00000008" }}
-              style={{ borderRadius: 12, paddingVertical: 4, overflow: "hidden" }}
+              style={styles.renamePressable}
+              accessibilityRole="button"
+              accessibilityLabel="Rename card"
             >
-              <Text style={{ fontSize: 24, fontWeight: "800", color: Colors.deep }}>
-                {card.title}
-              </Text>
-              <Text style={{ marginTop: 4, color: Colors.muted }}>Tap to rename</Text>
+              <Text style={[styles.bigTitle, { color: deep }]}>{card.title}</Text>
+              <Text style={[styles.subtitle, { color: muted }]}>Tap to rename</Text>
             </Pressable>
           ) : (
-            <View
-              style={{
-                backgroundColor: Colors.white,
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: "#00000010",
-                padding: 10,
-              }}
-            >
-              <Text style={{ color: Colors.deep, fontWeight: "800", marginBottom: 6 }}>
-                Rename card
-              </Text>
+            <CardContainer style={styles.renameCard}>
+              <Text style={[styles.sectionTitle, { color: deep }]}>Rename card</Text>
 
               <TextInput
                 ref={titleInputRef}
                 value={draftTitle}
                 onChangeText={setDraftTitle}
-                placeholder="Card title…"
-                placeholderTextColor={Colors.muted}
-                style={{
-                  backgroundColor: "#00000006",
-                  borderRadius: 12,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  color: Colors.deep,
-                  fontWeight: "700",
-                }}
+                placeholder="Card title..."
+                placeholderTextColor={muted}
+                style={[styles.input, styles.titleInput, { color: deep }]}
                 returnKeyType="done"
                 onSubmitEditing={commitTitle}
                 onBlur={commitTitle}
@@ -275,150 +271,78 @@ export default function CardDetailScreen({ route, navigation }: Props) {
                 autoCorrect={false}
               />
 
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "flex-end",
-                  gap: 10,
-                  marginTop: 10,
-                }}
-              >
-                <Pressable
+              <View style={styles.rowButtons}>
+                <ButtonSecondary
+                  title="Cancel"
+                  icon="close-circle-outline"
                   onPress={cancelEditTitle}
-                  android_ripple={{ color: "#00000010" }}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
-                    backgroundColor: "#00000008",
-                    overflow: "hidden",
-                  }}
-                >
-                  <Text style={{ color: Colors.deep, fontWeight: "800" }}>Cancel</Text>
-                </Pressable>
-
-                <Pressable
+                  style={styles.halfBtn}
+                />
+                <ButtonPrimary
+                  title="Save"
+                  icon="checkmark-circle-outline"
                   onPress={commitTitle}
-                  android_ripple={{ color: "#ffffff33" }}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
-                    backgroundColor: Colors.accent,
-                    overflow: "hidden",
-                  }}
-                >
-                  <Text style={{ color: Colors.white, fontWeight: "900" }}>Save</Text>
-                </Pressable>
+                  style={styles.halfBtn}
+                />
               </View>
-            </View>
+            </CardContainer>
           )}
         </View>
 
         {/* Status row + Share */}
-        <View
-          style={{
-            marginTop: 6,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-          }}
-        >
-          <Text style={{ color: Colors.muted }}>
-            {card.pinned ? "📌 Pinned" : "Not pinned"}
-          </Text>
+        <View style={styles.statusRow}>
+          <View style={styles.badgesRow}>
+            <Badge label={pinnedLabel} tone={pinnedTone} variant="soft" icon="bookmark-outline" />
+            <Badge label={`${clips.length} CLIPS`} tone="default" variant="soft" icon="albums-outline" />
+          </View>
 
-          <Pressable
+          <ButtonSecondary
+            title="Share"
+            icon="share-outline"
             onPress={onShare}
-            android_ripple={{ color: "#00000010" }}
-            style={{
-              paddingVertical: 8,
-              paddingHorizontal: 12,
-              borderRadius: 12,
-              backgroundColor: (Colors as any).lightAccent ?? "#DBEAFE",
-              overflow: "hidden",
-              borderWidth: 1,
-              borderColor: "#00000010",
-            }}
-          >
-            <Text style={{ color: Colors.deep, fontWeight: "900" }}>Share</Text>
-          </Pressable>
+            style={[styles.shareBtn, { borderColor: "#00000010", backgroundColor: lightAccent }]}
+            textStyle={{ color: deep }}
+          />
         </View>
 
-        {/* Add Clip (inline) */}
-        <View
-          style={{
-            marginTop: 16,
-            backgroundColor: Colors.white,
-            borderRadius: 16,
-            borderWidth: 1,
-            borderColor: "#00000010",
-            padding: 12,
-          }}
-        >
-          <Text style={{ color: Colors.deep, fontWeight: "700", marginBottom: 8 }}>
-            Add a clip
-          </Text>
+        {/* Add Clip */}
+        <CardContainer style={styles.addClipCard}>
+          <Text style={[styles.sectionTitle, { color: deep }]}>Add a clip</Text>
 
-          <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={styles.addRow}>
             <TextInput
               value={text}
               onChangeText={setText}
-              placeholder="Type something to save… (or paste a link)"
-              placeholderTextColor={Colors.muted}
-              style={{
-                flex: 1,
-                backgroundColor: "#00000006",
-                borderRadius: 12,
-                paddingHorizontal: 12,
-                paddingVertical: 10,
-                color: Colors.deep,
-              }}
+              placeholder="Type something to save... (or paste a link)"
+              placeholderTextColor={muted}
+              style={[styles.input, styles.clipInput, { color: deep }]}
               returnKeyType="done"
               onSubmitEditing={onAdd}
               autoCapitalize="none"
               autoCorrect={false}
             />
 
-            <Pressable
+            <ButtonPrimary
+              title="Add"
+              icon="add-outline"
               onPress={onAdd}
-              style={{
-                paddingHorizontal: 14,
-                borderRadius: 12,
-                backgroundColor: Colors.accent,
-                justifyContent: "center",
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ color: Colors.white, fontWeight: "800" }}>Add</Text>
-            </Pressable>
+              style={styles.addBtn}
+            />
           </View>
-        </View>
+        </CardContainer>
 
         {/* Clips list */}
-        <View style={{ marginTop: 16, flex: 1 }}>
-          <Text style={{ color: Colors.deep, fontWeight: "800", marginBottom: 10 }}>
-            Clips
-          </Text>
+        <View style={styles.listBlock}>
+          <Text style={[styles.sectionTitle, { color: deep }]}>Clips</Text>
 
           <FlatList
             data={clips}
             keyExtractor={(item) => item.id}
+            contentContainerStyle={{ paddingTop: 10, paddingBottom: 10 }}
             ListEmptyComponent={
-              <View
-                style={{
-                  marginTop: 18,
-                  alignItems: "center",
-                  padding: 16,
-                  backgroundColor: "#00000004",
-                  borderRadius: 16,
-                }}
-              >
-                <Text style={{ color: Colors.deep, fontWeight: "700" }}>
-                  No clips yet
-                </Text>
-                <Text style={{ marginTop: 6, color: Colors.muted, textAlign: "center" }}>
+              <View style={styles.emptyClips}>
+                <Text style={[styles.emptyTitle, { color: deep }]}>No clips yet</Text>
+                <Text style={[styles.emptyText, { color: muted }]}>
                   Add your first clip above. This is your lightweight vault.
                 </Text>
               </View>
@@ -427,70 +351,59 @@ export default function CardDetailScreen({ route, navigation }: Props) {
               const isLink = item.type === "link";
 
               return (
-                <Pressable
-                  onPress={() => {
-                    if (isLink) onOpenLink(item.text);
-                  }}
-                  android_ripple={isLink ? { color: "#00000008" } : undefined}
-                  style={{
-                    backgroundColor: Colors.white,
-                    borderRadius: 16,
-                    padding: 12,
-                    marginBottom: 10,
-                    borderWidth: 1,
-                    borderColor: "#00000010",
-                  }}
-                >
-                  <Text style={{ color: Colors.deep, fontWeight: "800" }}>
-                    {isLink ? "🔗 LINK" : "TEXT"}
-                  </Text>
-
-                  <Text
-                    style={{
-                      marginTop: 6,
-                      color: Colors.deep,
-                      textDecorationLine: isLink ? "underline" : "none",
-                    }}
-                    numberOfLines={isLink ? 2 : undefined}
-                  >
-                    {item.text}
-                  </Text>
-
-                  {isLink ? (
-                    <Text style={{ marginTop: 6, color: Colors.muted }}>Tap to open</Text>
-                  ) : null}
-
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "flex-end",
-                      marginTop: 10,
-                    }}
-                  >
+                <View style={styles.clipRowOuter}>
+                  <CardContainer style={styles.clipCard}>
                     <Pressable
-                      onPress={async () => {
-                        try {
-                          await removeClipItem(cardId, item.id);
-                        } catch (err) {
-                          console.error("Failed to remove clip:", err);
-                          Alert.alert("Error", "Couldn't remove this clip.");
-                        }
+                      onPress={() => {
+                        if (isLink) onOpenLink(item.text);
                       }}
-                      android_ripple={{ color: "#00000010" }}
-                      style={{
-                        paddingVertical: 8,
-                        paddingHorizontal: 12,
-                        borderRadius: 12,
-                        backgroundColor: "#00000008",
-                        overflow: "hidden",
-                      }}
+                      android_ripple={isLink ? { color: "#00000008" } : undefined}
+                      style={styles.clipPressable}
+                      accessibilityRole={isLink ? "button" : undefined}
+                      accessibilityLabel={isLink ? "Open link" : undefined}
                     >
-                      <Text style={{ color: Colors.deep, fontWeight: "700" }}>
-                        Remove
+                      <View style={styles.clipHeader}>
+                        {isLink ? (
+                          <Icon name="link-outline" size={18} color={deep} />
+                        ) : (
+                          <Icon name="text-outline" size={18} color={deep} />
+                        )}
+
+                        <Text style={[styles.clipKind, { color: deep }]}>
+                          {isLink ? "Link" : "Text"}
+                        </Text>
+
+                        {isLink ? (
+                          <View style={{ marginLeft: 8 }}>
+                            <Badge label="TAP TO OPEN" tone="primary" variant="soft" />
+                          </View>
+                        ) : null}
+                      </View>
+
+                      <Text
+                        style={[
+                          styles.clipText,
+                          {
+                            color: deep,
+                            textDecorationLine: isLink ? "underline" : "none",
+                          },
+                        ]}
+                        numberOfLines={isLink ? 2 : undefined}
+                      >
+                        {item.text}
                       </Text>
+
+                      <View style={styles.clipFooter}>
+                        <ButtonSecondary
+                          title="Remove"
+                          icon="trash-outline"
+                          onPress={() => removeClip(item.id)}
+                          style={styles.removeBtn}
+                        />
+                      </View>
                     </Pressable>
-                  </View>
-                </Pressable>
+                  </CardContainer>
+                </View>
               );
             }}
           />
@@ -499,3 +412,82 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     </KeyboardAvoidingView>
   );
 }
+
+const styles = StyleSheet.create({
+  notFoundWrap: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  notFoundTitle: { fontWeight: "700", fontSize: 16 },
+  notFoundText: { marginTop: 8, textAlign: "center" },
+
+  container: { flex: 1, padding: 16 },
+
+  topBlock: { marginBottom: 6 },
+  renamePressable: { borderRadius: 12, paddingVertical: 4, overflow: "hidden" },
+  bigTitle: { fontSize: 24, fontWeight: "800" },
+  subtitle: { marginTop: 4 },
+
+  renameCard: { padding: 12 },
+  sectionTitle: { fontWeight: "800", marginBottom: 8 },
+
+  rowButtons: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginTop: 10,
+  },
+  halfBtn: { flex: 1 },
+
+  statusRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+  badgesRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  shareBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12 },
+
+  addClipCard: { marginTop: 16, padding: 12 },
+  addRow: { flexDirection: "row", gap: 10, alignItems: "center" },
+
+  input: {
+    backgroundColor: "#00000006",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: "#00000010",
+  },
+  titleInput: { fontWeight: "700" },
+  clipInput: { flex: 1 },
+
+  addBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 },
+
+  listBlock: { marginTop: 16, flex: 1 },
+  emptyClips: {
+    marginTop: 18,
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#00000004",
+    borderRadius: 16,
+  },
+  emptyTitle: { fontWeight: "700" },
+  emptyText: { marginTop: 6, textAlign: "center" },
+
+  clipRowOuter: { marginBottom: 10 },
+  clipCard: { padding: 0, overflow: "hidden" },
+  clipPressable: { padding: 12 },
+
+  clipHeader: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  clipKind: { fontWeight: "800" },
+
+  clipText: { marginTop: 8 },
+
+  clipFooter: { marginTop: 12, alignItems: "flex-end" },
+  removeBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12 },
+});

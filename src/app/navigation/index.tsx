@@ -2,15 +2,19 @@ import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
+import HomeScreen from "../../features/home/HomeScreen";
 import InboxScreen from "../../features/inbox/InboxScreen";
 import CardDetailScreen from "../../features/card/CardDetailScreen";
 import SettingsScreen from "../../features/settings/SettingsScreen";
+import AgendaScreen from "../../features/agenda/AgendaScreen";
 
 import { Colors } from "../theme";
 import { navigationRef } from "../navigationRef";
 
 export type RootStackParamList = {
+  Home: undefined;
   Inbox: undefined;
+  Agenda: undefined;
   CardDetail: { cardId: string };
   Settings: undefined;
 };
@@ -21,6 +25,7 @@ export default function AppNavigator() {
   return (
     <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
+        initialRouteName="Home"
         screenOptions={{
           headerStyle: {
             backgroundColor: Colors.background,
@@ -32,9 +37,21 @@ export default function AppNavigator() {
         }}
       >
         <Stack.Screen
+          name="Home"
+          component={HomeScreen}
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
           name="Inbox"
           component={InboxScreen}
           options={{ title: "Inbox" }}
+        />
+
+        <Stack.Screen
+          name="Agenda"
+          component={AgendaScreen}
+          options={{ title: "Agenda" }}
         />
 
         <Stack.Screen
