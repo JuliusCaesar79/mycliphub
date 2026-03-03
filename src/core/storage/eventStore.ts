@@ -26,10 +26,13 @@ type EventState = {
   setCategoryFilter: (v: string | null) => void;
   clearFilters: () => void;
 
-  loadEventsForRange: (startAtInclusive: number, endAtExclusive: number) => Promise<void>;
+  loadEventsForRange: (
+    startAtInclusive: number,
+    endAtExclusive: number
+  ) => Promise<void>;
   loadEventsForDay: (dayStartMs: number) => Promise<void>;
 
-  // ✅ new: month fetch for markers
+  // ✅ month fetch for markers
   loadEventsForMonth: (monthStartMs: number) => Promise<void>;
 
   createEvent: (input: {
@@ -43,7 +46,10 @@ type EventState = {
     linkedCardIds?: string[];
   }) => Promise<string>;
 
-  updateEvent: (id: string, patch: Partial<Omit<AgendaEvent, "id" | "createdAt">>) => Promise<void>;
+  updateEvent: (
+    id: string,
+    patch: Partial<Omit<AgendaEvent, "id" | "createdAt">>
+  ) => Promise<void>;
   deleteEvent: (id: string) => Promise<void>;
 
   setLinkedCards: (eventId: string, cardIds: string[]) => Promise<void>;
@@ -54,7 +60,7 @@ type EventState = {
   getEvent: (id: string) => AgendaEventWithCards | null;
   getEventsForDay: (dayStartMs: number) => AgendaEventWithCards[];
 
-  // ✅ new: markers helper
+  // ✅ markers helper
   getDaysWithEventsForMonth: (monthStartMs: number) => Record<string, number>;
 };
 
@@ -127,6 +133,55 @@ function applyFilters(
   return out;
 }
 
+// --- STEP 2E helpers (multi-day expansion) ---
+
+/**
+ * Returns the list of dayKeys covered by the event.
+ * Coverage rule: any day that intersects [startAt, endAt) (endAt exclusive).
+ * If endAt is null or invalid (<= startAt), we treat it as single-day (start day).
+ *
+ * Important: if endAt lands exactly at 00:00 of a day, that day is NOT included.
+ * (hence using endAt - 1 for day computation)
+ */
+function getCoveredDayKeys(e: Pick<AgendaEvent, "startAt" | "endAt">): string[] {
+  const start = Number(e.startAt ?? 0);
+  const end = e.endAt == null ? null : Number(e.endAt);
+
+  if (!end || end <= start) {
+    return [dayKeyFromMs(start)];
+  }
+
+  const startDay = startOfDayMs(start);
+  const endInclusiveDay = startOfDayMs(end - 1); // end is exclusive
+
+  const out: string[] = [];
+  const cursor = new Date(startDay);
+  while (cursor.getTime() <= endInclusiveDay) {
+    out.push(dayKeyFromMs(cursor.getTime()));
+    cursor.setDate(cursor.getDate() + 1);
+    cursor.setHours(0, 0, 0, 0);
+  }
+  return out;
+}
+
+function uniq(arr: string[]) {
+  return Array.from(new Set(arr));
+}
+
+function sortBucketIds(
+  ids: string[],
+  byId: Record<string, AgendaEventWithCards>
+): string[] {
+  return [...ids].sort((aId, bId) => {
+    const a = byId[aId];
+    const b = byId[bId];
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return sortEventsAsc(a, b);
+  });
+}
+
 export const useEventStore = create<EventState>((set, get) => ({
   eventsById: {},
   eventIdsByDayKey: {},
@@ -137,68 +192,73 @@ export const useEventStore = create<EventState>((set, get) => ({
 
   setStatusFilter: (v) => set(() => ({ statusFilter: v })),
   setCategoryFilter: (v) => set(() => ({ categoryFilter: v })),
-  clearFilters: () => set(() => ({ statusFilter: "all", categoryFilter: null })),
+  clearFilters: () =>
+    set(() => ({ statusFilter: "all", categoryFilter: null })),
 
   loadEventsForRange: async (startAtInclusive, endAtExclusive) => {
-    const rows = await EventRepository.getByRangeWithCards(startAtInclusive, endAtExclusive);
+    // Repository (STEP 2E) ritorna eventi che INTERSECANO il range.
+    const rows = await EventRepository.getByRangeWithCards(
+      startAtInclusive,
+      endAtExclusive
+    );
 
     set((state) => {
       const nextById = { ...state.eventsById };
       const nextByDay = { ...state.eventIdsByDayKey };
 
+      const touchedKeys: string[] = [];
+
       for (const e of rows) {
         nextById[e.id] = e;
 
-        const dk = dayKeyFromMs(e.startAt);
-        const existing = nextByDay[dk] ?? [];
-        if (!existing.includes(e.id)) {
-          nextByDay[dk] = [...existing, e.id];
+        // 🔥 Multi-day expansion: bucket su tutti i giorni coperti
+        const keys = getCoveredDayKeys(e);
+        for (const dk of keys) {
+          const existing = nextByDay[dk] ?? [];
+          if (!existing.includes(e.id)) {
+            nextByDay[dk] = [...existing, e.id];
+            touchedKeys.push(dk);
+          }
         }
       }
 
-      // Keep ids in each day sorted by event ordering
-      for (const dk of Object.keys(nextByDay)) {
-        const ids = nextByDay[dk];
-        const sorted = [...ids].sort((aId, bId) => {
-          const a = nextById[aId];
-          const b = nextById[bId];
-          if (!a && !b) return 0;
-          if (!a) return 1;
-          if (!b) return -1;
-          return sortEventsAsc(a, b);
-        });
-        nextByDay[dk] = sorted;
+      // sort only touched keys (performance)
+      for (const dk of uniq(touchedKeys)) {
+        nextByDay[dk] = sortBucketIds(nextByDay[dk] ?? [], nextById);
       }
 
-      return { eventsById: nextById, eventIdsByDayKey: nextByDay, rev: state.rev + 1 };
+      return {
+        eventsById: nextById,
+        eventIdsByDayKey: nextByDay,
+        rev: state.rev + 1,
+      };
     });
   },
 
   loadEventsForDay: async (dayStartMs) => {
     const start = startOfDayMs(dayStartMs);
     const end = endOfDayExclusiveMs(start);
-
-    const rows = await EventRepository.getByRangeWithCards(start, end);
     const dk = dayKeyFromMs(start);
+
+    // Repository (STEP 2E) includerà anche multi-day che attraversano questo giorno
+    const rows = await EventRepository.getByRangeWithCards(start, end);
 
     set((state) => {
       const nextById = { ...state.eventsById };
       for (const e of rows) nextById[e.id] = e;
 
-      const ids = rows.map((e) => e.id).sort((aId, bId) => {
-        const a = nextById[aId];
-        const b = nextById[bId];
-        if (!a && !b) return 0;
-        if (!a) return 1;
-        if (!b) return -1;
-        return sortEventsAsc(a, b);
-      });
+      // Bucket accurato per quel giorno: includi solo eventi che coprono quel dk
+      const idsForThisDay = rows
+        .filter((e) => getCoveredDayKeys(e).includes(dk))
+        .map((e) => e.id);
+
+      const sortedIds = sortBucketIds(idsForThisDay, nextById);
 
       return {
         eventsById: nextById,
         eventIdsByDayKey: {
           ...state.eventIdsByDayKey,
-          [dk]: ids, // overwrite that day (accurate, no stale ids)
+          [dk]: sortedIds, // overwrite that day (accurate, no stale ids)
         },
         rev: state.rev + 1,
       };
@@ -216,40 +276,48 @@ export const useEventStore = create<EventState>((set, get) => ({
       const nextById = { ...state.eventsById };
       for (const e of rows) nextById[e.id] = e;
 
-      // group ids by dayKey
+      // group ids by dayKey (🔥 multi-day aware)
       const grouped: Record<string, string[]> = {};
+
       for (const e of rows) {
-        const dk = dayKeyFromMs(e.startAt);
-        if (!grouped[dk]) grouped[dk] = [];
-        grouped[dk].push(e.id);
+        const keys = getCoveredDayKeys(e);
+
+        for (const dk of keys) {
+          // limita al mese caricato (evita bucket fuori range)
+          // dk è "YYYY-MM-DD" -> confrontiamo via ms del giorno
+          // (safe: usiamo startOfDayMs del "start" e poi iteriamo il mese nel reset sotto)
+          if (!grouped[dk]) grouped[dk] = [];
+          if (!grouped[dk].includes(e.id)) grouped[dk].push(e.id);
+        }
       }
 
       // overwrite only the keys of this month range (clean markers / no stale)
       const nextByDay = { ...state.eventIdsByDayKey };
 
-      // remove existing keys belonging to this month (they might be stale)
+      // reset all days in month to empty
       const cursor = new Date(start);
       while (cursor.getTime() < end) {
         const dk = dayKeyFromMs(cursor.getTime());
-        nextByDay[dk] = []; // default empty
+        nextByDay[dk] = [];
         cursor.setDate(cursor.getDate() + 1);
         cursor.setHours(0, 0, 0, 0);
       }
 
-      // set grouped (sorted)
-      for (const dk of Object.keys(grouped)) {
-        const ids = grouped[dk];
-        nextByDay[dk] = [...ids].sort((aId, bId) => {
-          const a = nextById[aId];
-          const b = nextById[bId];
-          if (!a && !b) return 0;
-          if (!a) return 1;
-          if (!b) return -1;
-          return sortEventsAsc(a, b);
-        });
+      // set grouped for month days only (sorted)
+      const monthCursor = new Date(start);
+      while (monthCursor.getTime() < end) {
+        const dk = dayKeyFromMs(monthCursor.getTime());
+        const ids = grouped[dk] ?? [];
+        nextByDay[dk] = sortBucketIds(ids, nextById);
+        monthCursor.setDate(monthCursor.getDate() + 1);
+        monthCursor.setHours(0, 0, 0, 0);
       }
 
-      return { eventsById: nextById, eventIdsByDayKey: nextByDay, rev: state.rev + 1 };
+      return {
+        eventsById: nextById,
+        eventIdsByDayKey: nextByDay,
+        rev: state.rev + 1,
+      };
     });
   },
 
@@ -284,26 +352,19 @@ export const useEventStore = create<EventState>((set, get) => ({
     const withCards: AgendaEventWithCards = { ...event, cardIds: linked };
 
     set((state) => {
-      const dk = dayKeyFromMs(withCards.startAt);
-      const existing = state.eventIdsByDayKey[dk] ?? [];
-      const nextIds = existing.includes(id) ? existing : [...existing, id];
-
       const nextById = { ...state.eventsById, [id]: withCards };
-      const sortedIds = [...nextIds].sort((aId, bId) => {
-        const a = nextById[aId];
-        const b = nextById[bId];
-        if (!a && !b) return 0;
-        if (!a) return 1;
-        if (!b) return -1;
-        return sortEventsAsc(a, b);
-      });
+      const nextByDay = { ...state.eventIdsByDayKey };
+
+      const keys = getCoveredDayKeys(withCards);
+      for (const dk of keys) {
+        const existing = nextByDay[dk] ?? [];
+        const nextIds = existing.includes(id) ? existing : [...existing, id];
+        nextByDay[dk] = sortBucketIds(nextIds, nextById);
+      }
 
       return {
         eventsById: nextById,
-        eventIdsByDayKey: {
-          ...state.eventIdsByDayKey,
-          [dk]: sortedIds,
-        },
+        eventIdsByDayKey: nextByDay,
         rev: state.rev + 1,
       };
     });
@@ -322,10 +383,14 @@ export const useEventStore = create<EventState>((set, get) => ({
       ...patch,
       notes: patch.notes === undefined ? current.notes : patch.notes ?? null,
       endAt: patch.endAt === undefined ? current.endAt : patch.endAt ?? null,
-      category: patch.category === undefined ? current.category : patch.category ?? null,
+      category:
+        patch.category === undefined ? current.category : patch.category ?? null,
       allDay: patch.allDay === undefined ? current.allDay : Boolean(patch.allDay),
       status: (patch.status as EventStatus | undefined) ?? current.status,
-      title: patch.title === undefined ? current.title : normalizeTitle(String(patch.title)),
+      title:
+        patch.title === undefined
+          ? current.title
+          : normalizeTitle(String(patch.title)),
       updatedAt: now,
     };
 
@@ -342,33 +407,37 @@ export const useEventStore = create<EventState>((set, get) => ({
       updatedAt: next.updatedAt,
     });
 
-    const prevKey = dayKeyFromMs(current.startAt);
-    const nextKey = dayKeyFromMs(next.startAt);
+    // 🔥 Multi-day rebucket: rimuovi da tutti i giorni vecchi, aggiungi a tutti i nuovi
+    const prevKeys = getCoveredDayKeys(current);
+    const nextKeys = getCoveredDayKeys(next);
+    const affectedKeys = uniq([...prevKeys, ...nextKeys]);
 
     set((state) => {
       const nextById = { ...state.eventsById, [id]: next };
       const nextByDay = { ...state.eventIdsByDayKey };
 
-      if (prevKey !== nextKey) {
-        nextByDay[prevKey] = (nextByDay[prevKey] ?? []).filter((x) => x !== id);
-        const target = nextByDay[nextKey] ?? [];
-        nextByDay[nextKey] = target.includes(id) ? target : [...target, id];
+      // remove from prev keys
+      for (const k of prevKeys) {
+        if (!nextByDay[k]) continue;
+        nextByDay[k] = (nextByDay[k] ?? []).filter((x) => x !== id);
       }
 
-      const keysToSort = prevKey === nextKey ? [nextKey] : [prevKey, nextKey];
-      for (const k of keysToSort) {
-        const ids = nextByDay[k] ?? [];
-        nextByDay[k] = [...ids].sort((aId, bId) => {
-          const a = nextById[aId];
-          const b = nextById[bId];
-          if (!a && !b) return 0;
-          if (!a) return 1;
-          if (!b) return -1;
-          return sortEventsAsc(a, b);
-        });
+      // add to new keys
+      for (const k of nextKeys) {
+        const bucket = nextByDay[k] ?? [];
+        nextByDay[k] = bucket.includes(id) ? bucket : [...bucket, id];
       }
 
-      return { eventsById: nextById, eventIdsByDayKey: nextByDay, rev: state.rev + 1 };
+      // sort affected keys
+      for (const k of affectedKeys) {
+        nextByDay[k] = sortBucketIds(nextByDay[k] ?? [], nextById);
+      }
+
+      return {
+        eventsById: nextById,
+        eventIdsByDayKey: nextByDay,
+        rev: state.rev + 1,
+      };
     });
   },
 
@@ -378,17 +447,24 @@ export const useEventStore = create<EventState>((set, get) => ({
 
     await EventRepository.deleteById(id);
 
+    const keys = getCoveredDayKeys(current);
+
     set((state) => {
       const nextById = { ...state.eventsById };
       delete nextById[id];
 
-      const dk = dayKeyFromMs(current.startAt);
       const nextByDay = { ...state.eventIdsByDayKey };
-      if (nextByDay[dk]) {
-        nextByDay[dk] = nextByDay[dk].filter((x) => x !== id);
+      for (const dk of keys) {
+        if (nextByDay[dk]) {
+          nextByDay[dk] = nextByDay[dk].filter((x) => x !== id);
+        }
       }
 
-      return { eventsById: nextById, eventIdsByDayKey: nextByDay, rev: state.rev + 1 };
+      return {
+        eventsById: nextById,
+        eventIdsByDayKey: nextByDay,
+        rev: state.rev + 1,
+      };
     });
   },
 
@@ -456,12 +532,15 @@ export const useEventStore = create<EventState>((set, get) => ({
     const state = get();
     const dk = dayKeyFromMs(startOfDayMs(dayStartMs));
     const ids = state.eventIdsByDayKey[dk] ?? [];
-    const list = ids.map((id) => state.eventsById[id]).filter(Boolean) as AgendaEventWithCards[];
+    const list = ids
+      .map((id) => state.eventsById[id])
+      .filter(Boolean) as AgendaEventWithCards[];
     const filtered = applyFilters(list, state.statusFilter, state.categoryFilter);
     return [...filtered].sort(sortEventsAsc);
   },
 
   // ✅ markers helper: count events per day for month
+  // NOTE: con STEP 2E ora conteggia anche i giorni intermedi dei multi-day (bene!)
   getDaysWithEventsForMonth: (monthStartMs) => {
     const state = get();
     const start = startOfMonthMs(monthStartMs);

@@ -245,6 +245,7 @@ export default function AgendaScreen({ navigation }: Props) {
 
   const loadEventsForDay = useEventStore((s) => s.loadEventsForDay);
   const loadEventsForMonth = useEventStore((s) => s.loadEventsForMonth);
+  const loadEventsForRange = useEventStore((s) => s.loadEventsForRange); // 🔥 STEP 2E
 
   const statusFilter = useEventStore((s) => s.statusFilter);
   const categoryFilter = useEventStore((s) => s.categoryFilter);
@@ -278,6 +279,7 @@ export default function AgendaScreen({ navigation }: Props) {
 
   // ---- week tracking (for week view) ----
   const weekStart = useMemo(() => startOfWeekMonday(selectedDayStart), [selectedDayStart]);
+  const weekEndExclusive = useMemo(() => addDaysStart(weekStart, 7), [weekStart]); // 🔥 [Mon..nextMon)
 
   const onCalendarDayPress = useCallback((day: DateData) => {
     const ms = startOfDayMs(new Date(day.dateString + "T00:00:00").getTime());
@@ -293,6 +295,12 @@ export default function AgendaScreen({ navigation }: Props) {
   useEffect(() => {
     loadEventsForDay(selectedDayStart);
   }, [loadEventsForDay, selectedDayStart]);
+
+  // 🔥 STEP 2E: when in week view, ensure the whole week is loaded (multi-day safe)
+  useEffect(() => {
+    if (viewMode !== "week") return;
+    loadEventsForRange(weekStart, weekEndExclusive);
+  }, [viewMode, loadEventsForRange, weekStart, weekEndExclusive]);
 
   // ✅ load month events initially and when month changes
   useEffect(() => {
@@ -385,6 +393,9 @@ export default function AgendaScreen({ navigation }: Props) {
   const [newNotes, setNewNotes] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newAllDay, setNewAllDay] = useState(false);
+  const [startHour, setStartHour] = useState(9);
+  const [endHour, setEndHour] = useState(10);
+  const [endsNextDay, setEndsNextDay] = useState(false);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -394,33 +405,50 @@ export default function AgendaScreen({ navigation }: Props) {
     setNewNotes("");
     setNewCategory("");
     setNewAllDay(false);
+    setStartHour(9);
+    setEndHour(10);
+    setEndsNextDay(false);
     setCreateOpen(true);
   }, []);
 
   const doCreate = useCallback(async () => {
-    const t = (newTitle ?? "").trim();
-    if (!t.length) {
-      Alert.alert("Missing title", "Please enter a title for the event.");
-      return;
-    }
+  const t = (newTitle ?? "").trim();
+  if (!t.length) {
+    Alert.alert("Missing title", "Please enter a title for the event.");
+    return;
+  }
 
-    const startAt = selectedDayStart + 9 * 60 * 60 * 1000;
+  // Start: selected day + startHour
+  const startAt = selectedDayStart + startHour * 60 * 60 * 1000;
 
-    const id = await createEvent({
-      title: t,
-      notes: (newNotes ?? "").trim() ? newNotes.trim() : null,
-      startAt,
-      endAt: null,
-      allDay: newAllDay,
-      status: "todo",
-      category: (newCategory ?? "").trim() ? newCategory.trim() : null,
-      linkedCardIds: [],
-    });
+  // End: selected day + endHour (optionally +1 day)
+  const baseEnd = selectedDayStart + endHour * 60 * 60 * 1000;
+  const endAt = endsNextDay ? baseEnd + 24 * 60 * 60 * 1000 : baseEnd;
 
-    setCreateOpen(false);
-    setDetailId(id);
-    setDetailOpen(true);
-  }, [createEvent, newTitle, newNotes, newCategory, newAllDay, selectedDayStart]);
+  const id = await createEvent({
+    title: t,
+    notes: (newNotes ?? "").trim() ? newNotes.trim() : null,
+    startAt,
+    endAt, // 🔥 STEP 2E
+    allDay: false, // per ora lo lasciamo così (MVP multi-day)
+    status: "todo",
+    category: (newCategory ?? "").trim() ? newCategory.trim() : null,
+    linkedCardIds: [],
+  });
+
+  setCreateOpen(false);
+  setDetailId(id);
+  setDetailOpen(true);
+}, [
+  createEvent,
+  newTitle,
+  newNotes,
+  newCategory,
+  selectedDayStart,
+  startHour,
+  endHour,
+  endsNextDay,
+]);
 
   const confirmDelete = useCallback(
     (id: string, title: string) => {
@@ -627,8 +655,24 @@ export default function AgendaScreen({ navigation }: Props) {
 
   // ---- shared renderer for event item (used by FlatList + SectionList) ----
   const renderEventItem = useCallback(
-    (item: any) => {
-      const timeLabel = item.allDay ? "All day" : formatTime(item.startAt);
+    (item: any, dayStartOverride?: number) => {
+      const dayStart = startOfDayMs(dayStartOverride ?? selectedDayStart);
+const dayEndExclusive = addDaysStart(dayStart, 1);
+
+const startAt = Number(item.startAt ?? 0);
+const endAt = item.endAt == null ? null : Number(item.endAt);
+
+// Default: show start time
+let timeLabel = item.allDay ? "All day" : formatTime(startAt);
+
+// If multi-day and this day is NOT the start day, show end time
+if (!item.allDay && endAt && endAt > startAt) {
+  const startDay = startOfDayMs(startAt);
+  if (startDay !== dayStart) {
+    const clampedEnd = Math.min(endAt, dayEndExclusive);
+    timeLabel = "Until " + formatTime(clampedEnd - 1);
+  }
+}
       const metaLine = "Time: " + timeLabel + (item.category ? "  |  Category: " + String(item.category) : "");
 
       const b = statusToBadge(item.status);
@@ -667,7 +711,7 @@ export default function AgendaScreen({ navigation }: Props) {
         </View>
       );
     },
-    [C.deep, C.muted, C.primary]
+    [selectedDayStart, C.deep, C.muted, C.primary]
   );
 
   return (
@@ -684,7 +728,7 @@ export default function AgendaScreen({ navigation }: Props) {
               <Text style={[styles.weekSectionTitle, { color: C.deep }]}>{section.title}</Text>
             </View>
           )}
-          renderItem={({ item }: any) => renderEventItem(item)}
+          renderItem={({ item, section }: any) => renderEventItem(item, section.dayStart)}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <Text style={[styles.emptyTitle, { color: C.deep }]}>No events in this week</Text>
@@ -771,6 +815,51 @@ export default function AgendaScreen({ navigation }: Props) {
                 style={[styles.fieldInput, { color: C.deep }]}
               />
             </View>
+
+            <View style={{ marginTop: 14 }}>
+  <Text style={[styles.fieldLabel, { color: C.deep }]}>Start hour (0–23)</Text>
+  <TextInput
+    value={String(startHour)}
+    onChangeText={(v) =>
+      setStartHour(Math.max(0, Math.min(23, Number(v) || 0)))
+    }
+    keyboardType="numeric"
+    style={[styles.fieldInput, { color: C.deep }]}
+  />
+</View>
+
+<View style={{ marginTop: 12 }}>
+  <Text style={[styles.fieldLabel, { color: C.deep }]}>End hour (0–23)</Text>
+  <TextInput
+    value={String(endHour)}
+    onChangeText={(v) =>
+      setEndHour(Math.max(0, Math.min(23, Number(v) || 0)))
+    }
+    keyboardType="numeric"
+    style={[styles.fieldInput, { color: C.deep }]}
+  />
+</View>
+
+<View style={{ marginTop: 12 }}>
+  <Pressable
+    onPress={() => setEndsNextDay((v) => !v)}
+    android_ripple={{ color: "#00000010" }}
+    style={{
+      padding: 10,
+      borderRadius: 12,
+      backgroundColor: endsNextDay ? "#DBEAFE" : "#00000006",
+      borderWidth: 1,
+      borderColor: "#00000010",
+      overflow: "hidden",
+    }}
+    accessibilityRole="button"
+    accessibilityLabel="Toggle ends next day"
+  >
+    <Text style={{ fontWeight: "900", color: C.deep }}>
+      {endsNextDay ? "Ends next day: YES" : "Ends next day: NO"}
+    </Text>
+  </Pressable>
+</View>
 
             <View style={styles.modalButtonsRow}>
               <ButtonSecondary

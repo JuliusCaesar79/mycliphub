@@ -33,6 +33,31 @@ function normalizeStatus(v: unknown): EventStatus {
   return "todo";
 }
 
+function rowToEvent(item: any): AgendaEvent {
+  const startAt = Number(item.start_at ?? 0);
+  const endAtRaw = item.end_at == null ? null : Number(item.end_at);
+
+  // NOTE: non forziamo correzioni “hard” qui.
+  // Se endAt < startAt, lo lasciamo così e sarà gestito a livello UI/logic,
+  // ma in futuro possiamo normalizzare lato create/update.
+  return {
+    id: String(item.id),
+    title: String(item.title ?? ""),
+    notes: item.notes == null ? null : String(item.notes),
+
+    startAt,
+    endAt: endAtRaw,
+
+    allDay: toBool01(item.all_day),
+
+    status: normalizeStatus(item.status),
+    category: item.category == null ? null : String(item.category),
+
+    createdAt: Number(item.created_at ?? 0),
+    updatedAt: Number(item.updated_at ?? 0),
+  };
+}
+
 export const EventRepository = {
   async create(event: AgendaEvent) {
     const db = await getDB();
@@ -112,24 +137,7 @@ export const EventRepository = {
 
     if (result.rows.length === 0) return null;
 
-    const item = result.rows.item(0);
-
-    return {
-      id: String(item.id),
-      title: String(item.title ?? ""),
-      notes: item.notes == null ? null : String(item.notes),
-
-      startAt: Number(item.start_at ?? 0),
-      endAt: item.end_at == null ? null : Number(item.end_at),
-
-      allDay: toBool01(item.all_day),
-
-      status: normalizeStatus(item.status),
-      category: item.category == null ? null : String(item.category),
-
-      createdAt: Number(item.created_at ?? 0),
-      updatedAt: Number(item.updated_at ?? 0),
-    };
+    return rowToEvent(result.rows.item(0));
   },
 
   async deleteById(id: string) {
@@ -138,8 +146,15 @@ export const EventRepository = {
     await db.executeSql(`DELETE FROM events WHERE id = ?;`, [id]);
   },
 
-  // Range query: utile per giorno/settimana/mese (passi start/end in ms)
-  async getByRange(startAtInclusive: number, endAtExclusive: number): Promise<AgendaEvent[]> {
+  /**
+   * Range query (START-ONLY) — compatibilità:
+   * ritorna SOLO eventi che iniziano dentro [startAtInclusive, endAtExclusive)
+   * (comportamento precedente).
+   */
+  async getByStartRange(
+    startAtInclusive: number,
+    endAtExclusive: number
+  ): Promise<AgendaEvent[]> {
     const db = await getDB();
 
     const [result] = await db.executeSql(
@@ -160,24 +175,52 @@ export const EventRepository = {
     const events: AgendaEvent[] = [];
 
     for (let i = 0; i < rows.length; i++) {
-      const item = rows.item(i);
+      events.push(rowToEvent(rows.item(i)));
+    }
 
-      events.push({
-        id: String(item.id),
-        title: String(item.title ?? ""),
-        notes: item.notes == null ? null : String(item.notes),
+    return events;
+  },
 
-        startAt: Number(item.start_at ?? 0),
-        endAt: item.end_at == null ? null : Number(item.end_at),
+  /**
+   * Range query (INTERSECTING) — STEP 2E:
+   * ritorna TUTTI gli eventi che intersecano il range [startAtInclusive, endAtExclusive)
+   *
+   * Logica intersezione:
+   * - l'evento deve iniziare prima della fine del range
+   * - e deve finire dopo l'inizio del range
+   *
+   * Se end_at è NULL => evento “istantaneo” (vale start_at).
+   */
+  async getByRange(
+    startAtInclusive: number,
+    endAtExclusive: number
+  ): Promise<AgendaEvent[]> {
+    const db = await getDB();
 
-        allDay: toBool01(item.all_day),
+    const [result] = await db.executeSql(
+      `
+      SELECT
+        id, title, notes,
+        start_at, end_at,
+        all_day, status, category,
+        created_at, updated_at
+      FROM events
+      WHERE
+        start_at < ?
+        AND (
+          (end_at IS NULL AND start_at >= ?)
+          OR (end_at IS NOT NULL AND end_at > ?)
+        )
+      ORDER BY start_at ASC;
+      `,
+      [endAtExclusive, startAtInclusive, startAtInclusive]
+    );
 
-        status: normalizeStatus(item.status),
-        category: item.category == null ? null : String(item.category),
+    const rows = result.rows;
+    const events: AgendaEvent[] = [];
 
-        createdAt: Number(item.created_at ?? 0),
-        updatedAt: Number(item.updated_at ?? 0),
-      });
+    for (let i = 0; i < rows.length; i++) {
+      events.push(rowToEvent(rows.item(i)));
     }
 
     return events;
@@ -191,7 +234,9 @@ export const EventRepository = {
     await db.executeSql("BEGIN TRANSACTION;");
 
     try {
-      await db.executeSql(`DELETE FROM event_cards WHERE event_id = ?;`, [eventId]);
+      await db.executeSql(`DELETE FROM event_cards WHERE event_id = ?;`, [
+        eventId,
+      ]);
 
       for (const cardId of cardIds) {
         await db.executeSql(
@@ -259,11 +304,11 @@ export const EventRepository = {
     startAtInclusive: number,
     endAtExclusive: number
   ): Promise<AgendaEventWithCards[]> {
+    // 🔥 STEP 2E: qui vogliamo gli eventi INTERSECTING (multi-day inclusi)
     const events = await this.getByRange(startAtInclusive, endAtExclusive);
 
     if (events.length === 0) return [];
 
-    // Fetch links in one shot for performance
     const db = await getDB();
 
     // Build IN (?, ?, ...) safely
