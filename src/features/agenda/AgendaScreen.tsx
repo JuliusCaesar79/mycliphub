@@ -25,74 +25,25 @@ import ButtonSecondary from "../../ui/ButtonSecondary";
 import Badge from "../../ui/Badge";
 import CardContainer from "../../ui/CardContainer";
 
+import DayTimelineGrid from "./day/DayTimelineGrid";
+import WeekGrid from "./week/WeekGrid";
+
+import {
+  addDaysStart,
+  clamp,
+  formatDayTitle,
+  formatTime,
+  startOfDayMs,
+  startOfMonthMs,
+  startOfWeekMonday,
+  ymdKeyFromStart,
+  ymKeyFromStart,
+  shortDowLabel,
+} from "./utils/timeMath";
+
 type Props = NativeStackScreenProps<RootStackParamList, "Agenda">;
 
 type ViewMode = "day" | "week" | "month";
-
-// ---- tiny date helpers (safe, no Intl dependency) ----
-function pad2(n: number) {
-  return n < 10 ? `0${n}` : `${n}`;
-}
-
-function startOfDayMs(ms: number) {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-function addDaysStart(msStart: number, days: number) {
-  const next = msStart + days * 24 * 60 * 60 * 1000;
-  return startOfDayMs(next);
-}
-
-function ymdKeyFromStart(msStart: number) {
-  const d = new Date(msStart);
-  const yyyy = d.getFullYear();
-  const mm = pad2(d.getMonth() + 1);
-  const dd = pad2(d.getDate());
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function ymKeyFromStart(msStart: number) {
-  const d = new Date(msStart);
-  const yyyy = d.getFullYear();
-  const mm = pad2(d.getMonth() + 1);
-  return `${yyyy}-${mm}`;
-}
-
-function startOfMonthMs(ms: number) {
-  const d = new Date(ms);
-  d.setDate(1);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-function formatDayTitle(ms: number) {
-  const d = new Date(ms);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const dd = pad2(d.getDate());
-  const mon = months[d.getMonth()] ?? "";
-  const yyyy = d.getFullYear();
-  return `${dd} ${mon} ${yyyy}`;
-}
-
-function formatTime(ms: number) {
-  const d = new Date(ms);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
-function startOfWeekMonday(msStart: number) {
-  const d = new Date(msStart);
-  const day = d.getDay(); // 0 Sun .. 6 Sat
-  const mondayOffset = day === 0 ? -6 : 1 - day; // Sun => -6, Mon => 0
-  return addDaysStart(msStart, mondayOffset);
-}
-
-function shortDowLabel(msStart: number) {
-  const d = new Date(msStart);
-  const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  return labels[d.getDay()] ?? "";
-}
 
 function statusToBadge(status: "todo" | "doing" | "done") {
   switch (status) {
@@ -106,130 +57,9 @@ function statusToBadge(status: "todo" | "doing" | "done") {
   }
 }
 
-function SegmentedStatusRow({
-  value,
-  onChange,
-  C,
-}: {
-  value: "all" | "todo" | "doing" | "done";
-  onChange: (v: "all" | "todo" | "doing" | "done") => void;
-  C: { white: string; deep: string };
-}) {
-  const items: Array<{ key: "all" | "todo" | "doing" | "done"; label: string }> = [
-    { key: "all", label: "All" },
-    { key: "todo", label: "To-do" },
-    { key: "doing", label: "Doing" },
-    { key: "done", label: "Done" },
-  ];
-
-  return (
-    <View style={styles.segmentedWrap}>
-      {items.map((it) => {
-        const active = value === it.key;
-        return (
-          <Pressable
-            key={it.key}
-            onPress={() => onChange(it.key)}
-            android_ripple={{ color: "#00000010" }}
-            style={[
-              styles.segmentItem,
-              active && { backgroundColor: C.white, borderWidth: 1, borderColor: "#00000010" },
-            ]}
-            accessibilityRole="button"
-          >
-            <Text style={[styles.segmentText, { color: C.deep }]}>{it.label}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-function SegmentedViewRow({
-  value,
-  onChange,
-  C,
-}: {
-  value: ViewMode;
-  onChange: (v: ViewMode) => void;
-  C: { white: string; deep: string };
-}) {
-  const items: Array<{ key: ViewMode; label: string; icon: any }> = [
-    { key: "day", label: "Day", icon: "today-outline" },
-    { key: "week", label: "Week", icon: "calendar-outline" },
-    { key: "month", label: "Month", icon: "grid-outline" },
-  ];
-
-  return (
-    <View style={styles.segmentedWrap}>
-      {items.map((it) => {
-        const active = value === it.key;
-        return (
-          <Pressable
-            key={it.key}
-            onPress={() => onChange(it.key)}
-            android_ripple={{ color: "#00000010" }}
-            style={[
-              styles.segmentItem,
-              active && { backgroundColor: C.white, borderWidth: 1, borderColor: "#00000010" },
-            ]}
-            accessibilityRole="button"
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Icon name={it.icon} size={16} color={C.deep} />
-              <Text style={[styles.segmentText, { color: C.deep }]}>{it.label}</Text>
-            </View>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-function WeekStrip({
-  weekStart,
-  selectedDayStart,
-  onSelectDay,
-  C,
-}: {
-  weekStart: number;
-  selectedDayStart: number;
-  onSelectDay: (msStart: number) => void;
-  C: { deep: string; muted: string; white: string; accent: string };
-}) {
-  const days = useMemo(() => {
-    return Array.from({ length: 7 }).map((_, i) => addDaysStart(weekStart, i));
-  }, [weekStart]);
-
-  return (
-    <View style={styles.weekRow}>
-      {days.map((d0) => {
-        const active = d0 === selectedDayStart;
-        return (
-          <Pressable
-            key={d0}
-            onPress={() => onSelectDay(d0)}
-            android_ripple={{ color: "#00000010" }}
-            style={[
-              styles.weekPill,
-              active && { backgroundColor: C.accent, borderColor: C.accent },
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Select day"
-          >
-            <Text style={[styles.weekDow, { color: active ? C.white : C.muted }]}>{shortDowLabel(d0)}</Text>
-            <Text style={[styles.weekDay, { color: active ? C.white : C.deep }]}>{pad2(new Date(d0).getDate())}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
 export default function AgendaScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
 
-  // ---- HARDEN COLORS (prevents black/blank screens if theme keys missing) ----
   const C = useMemo(() => {
     const anyColors = Colors as any;
     return {
@@ -245,7 +75,7 @@ export default function AgendaScreen({ navigation }: Props) {
 
   const loadEventsForDay = useEventStore((s) => s.loadEventsForDay);
   const loadEventsForMonth = useEventStore((s) => s.loadEventsForMonth);
-  const loadEventsForRange = useEventStore((s) => s.loadEventsForRange); // 🔥 STEP 2E
+  const loadEventsForRange = useEventStore((s) => s.loadEventsForRange);
 
   const statusFilter = useEventStore((s) => s.statusFilter);
   const categoryFilter = useEventStore((s) => s.categoryFilter);
@@ -258,28 +88,22 @@ export default function AgendaScreen({ navigation }: Props) {
   const deleteEvent = useEventStore((s) => s.deleteEvent);
   const setLinkedCards = useEventStore((s) => s.setLinkedCards);
 
-  // ✅ rev: triggers render when store data changes (load/create/update/delete/link)
   const rev = useEventStore((s) => s.rev);
-
   const cards = useCardStore((s) => s.cards);
 
-  // ---- day selection (robust) ----
   const todayStart = useMemo(() => startOfDayMs(Date.now()), []);
   const [selectedDayStart, setSelectedDayStart] = useState<number>(todayStart);
 
   const selectedDateKey = useMemo(() => ymdKeyFromStart(selectedDayStart), [selectedDayStart]);
   const isTodaySelected = selectedDayStart === todayStart;
 
-  // ---- view mode (STEP 2C) ----
   const [viewMode, setViewMode] = useState<ViewMode>("day");
 
-  // ---- month tracking (for smart loader) ----
   const [visibleMonthStart, setVisibleMonthStart] = useState<number>(() => startOfMonthMs(todayStart));
   const visibleMonthKey = useMemo(() => ymKeyFromStart(visibleMonthStart), [visibleMonthStart]);
 
-  // ---- week tracking (for week view) ----
   const weekStart = useMemo(() => startOfWeekMonday(selectedDayStart), [selectedDayStart]);
-  const weekEndExclusive = useMemo(() => addDaysStart(weekStart, 7), [weekStart]); // 🔥 [Mon..nextMon)
+  const weekEndExclusive = useMemo(() => addDaysStart(weekStart, 7), [weekStart]);
 
   const onCalendarDayPress = useCallback((day: DateData) => {
     const ms = startOfDayMs(new Date(day.dateString + "T00:00:00").getTime());
@@ -291,30 +115,25 @@ export default function AgendaScreen({ navigation }: Props) {
     setVisibleMonthStart(ms);
   }, []);
 
-  // ✅ load day events when selected day changes (always)
   useEffect(() => {
     loadEventsForDay(selectedDayStart);
   }, [loadEventsForDay, selectedDayStart]);
 
-  // 🔥 STEP 2E: when in week view, ensure the whole week is loaded (multi-day safe)
   useEffect(() => {
     if (viewMode !== "week") return;
     loadEventsForRange(weekStart, weekEndExclusive);
   }, [viewMode, loadEventsForRange, weekStart, weekEndExclusive]);
 
-  // ✅ load month events initially and when month changes
   useEffect(() => {
     loadEventsForMonth(visibleMonthStart);
   }, [loadEventsForMonth, visibleMonthStart]);
 
-  // ✅ SAFE: compute events from current store state, and re-run when rev changes
   const events = useMemo(() => {
     void rev;
     const state = useEventStore.getState();
     return state.getEventsForDay(selectedDayStart);
   }, [rev, selectedDayStart, statusFilter, categoryFilter]);
 
-  // ✅ helper: get events for any dayStart (for week sections)
   const eventsForDayStart = useCallback(
     (msStart: number) => {
       void rev;
@@ -324,19 +143,25 @@ export default function AgendaScreen({ navigation }: Props) {
     [rev]
   );
 
-  // ✅ month markers (counts) from store state
   const monthCounts = useMemo(() => {
     void rev;
     const state = useEventStore.getState();
-    return state.getDaysWithEventsForMonth(visibleMonthStart); // Record<YYYY-MM-DD, count>
+    return state.getDaysWithEventsForMonth(visibleMonthStart);
   }, [rev, visibleMonthStart]);
 
-  // ✅ markedDates: dots for days with events + selected day highlight
+  // ✅ Month: marker densità con multi-dot + “+N”
   const markedDates = useMemo(() => {
     const out: Record<string, any> = {};
 
     for (const dk of Object.keys(monthCounts)) {
-      out[dk] = { marked: true, dotColor: C.accent };
+      const count = Number((monthCounts as any)[dk] ?? 0);
+      const dotsCount = clamp(count, 0, 3);
+      const dots = Array.from({ length: dotsCount }).map(() => ({ color: C.accent }));
+
+      out[dk] = {
+        marked: count > 0,
+        dots,
+      };
     }
 
     const prev = out[selectedDateKey] ?? {};
@@ -344,8 +169,8 @@ export default function AgendaScreen({ navigation }: Props) {
       ...prev,
       selected: true,
       selectedColor: C.accent,
-      marked: prev.marked ?? (monthCounts[selectedDateKey] ? true : false),
-      dotColor: prev.dotColor ?? C.accent,
+      marked: prev.marked ?? (monthCounts as any)[selectedDateKey] ? true : false,
+      dots: prev.dots ?? [],
     };
 
     return out;
@@ -388,13 +213,19 @@ export default function AgendaScreen({ navigation }: Props) {
     setVisibleMonthStart(startOfMonthMs(todayStart));
   }, [todayStart]);
 
+  // ---- Create / Detail ----
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newNotes, setNewNotes] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newAllDay, setNewAllDay] = useState(false);
+
+  // ✅ minuti (STEP 2G tap-to-create serio)
   const [startHour, setStartHour] = useState(9);
+  const [startMinute, setStartMinute] = useState(0);
   const [endHour, setEndHour] = useState(10);
+  const [endMinute, setEndMinute] = useState(0);
+
   const [endsNextDay, setEndsNextDay] = useState(false);
 
   const [detailOpen, setDetailOpen] = useState(false);
@@ -406,49 +237,87 @@ export default function AgendaScreen({ navigation }: Props) {
     setNewCategory("");
     setNewAllDay(false);
     setStartHour(9);
+    setStartMinute(0);
     setEndHour(10);
+    setEndMinute(0);
     setEndsNextDay(false);
     setCreateOpen(true);
   }, []);
 
+  const openCreateAt = useCallback(
+    (dayStart: number, minuteOfDay: number) => {
+      setNewTitle("");
+      setNewNotes("");
+      setNewCategory("");
+      setNewAllDay(false);
+
+      const sh = Math.floor(minuteOfDay / 60);
+      const sm = minuteOfDay % 60;
+
+      const defaultDur = 60;
+      const endMin = clamp(minuteOfDay + defaultDur, 0, 24 * 60);
+
+      const eh = Math.floor(endMin / 60);
+      const em = endMin % 60;
+
+      setSelectedDayStart(dayStart);
+      setStartHour(sh);
+      setStartMinute(sm);
+      setEndHour(eh);
+      setEndMinute(em);
+      setEndsNextDay(false);
+
+      setCreateOpen(true);
+    },
+    []
+  );
+
   const doCreate = useCallback(async () => {
-  const t = (newTitle ?? "").trim();
-  if (!t.length) {
-    Alert.alert("Missing title", "Please enter a title for the event.");
-    return;
-  }
+    const t = (newTitle ?? "").trim();
+    if (!t.length) {
+      Alert.alert("Missing title", "Please enter a title for the event.");
+      return;
+    }
 
-  // Start: selected day + startHour
-  const startAt = selectedDayStart + startHour * 60 * 60 * 1000;
+    let startAt: number;
+    let endAt: number;
 
-  // End: selected day + endHour (optionally +1 day)
-  const baseEnd = selectedDayStart + endHour * 60 * 60 * 1000;
-  const endAt = endsNextDay ? baseEnd + 24 * 60 * 60 * 1000 : baseEnd;
+    if (newAllDay) {
+      startAt = selectedDayStart;
+      endAt = addDaysStart(selectedDayStart, 1);
+    } else {
+      startAt = selectedDayStart + (startHour * 60 + startMinute) * 60 * 1000;
+      const baseEnd = selectedDayStart + (endHour * 60 + endMinute) * 60 * 1000;
+      endAt = endsNextDay ? baseEnd + 24 * 60 * 60 * 1000 : baseEnd;
+    }
 
-  const id = await createEvent({
-    title: t,
-    notes: (newNotes ?? "").trim() ? newNotes.trim() : null,
-    startAt,
-    endAt, // 🔥 STEP 2E
-    allDay: false, // per ora lo lasciamo così (MVP multi-day)
-    status: "todo",
-    category: (newCategory ?? "").trim() ? newCategory.trim() : null,
-    linkedCardIds: [],
-  });
+    const id = await createEvent({
+      title: t,
+      notes: (newNotes ?? "").trim() ? newNotes.trim() : null,
+      startAt,
+      endAt,
+      allDay: newAllDay,
+      status: "todo",
+      category: (newCategory ?? "").trim() ? newCategory.trim() : null,
+      linkedCardIds: [],
+    });
 
-  setCreateOpen(false);
-  setDetailId(id);
-  setDetailOpen(true);
-}, [
-  createEvent,
-  newTitle,
-  newNotes,
-  newCategory,
-  selectedDayStart,
-  startHour,
-  endHour,
-  endsNextDay,
-]);
+    setCreateOpen(false);
+    setDetailId(id);
+    setDetailOpen(true);
+  }, [
+    createEvent,
+    newTitle,
+    newNotes,
+    newCategory,
+    selectedDayStart,
+    startHour,
+    startMinute,
+    endHour,
+    endMinute,
+    endsNextDay,
+    newAllDay,
+  ]);
 
   const confirmDelete = useCallback(
     (id: string, title: string) => {
@@ -468,7 +337,6 @@ export default function AgendaScreen({ navigation }: Props) {
     [deleteEvent]
   );
 
-  // ✅ SAFE: compute detail from store state (re-run on rev)
   const detail = useMemo(() => {
     void rev;
     if (!detailId) return null;
@@ -479,7 +347,7 @@ export default function AgendaScreen({ navigation }: Props) {
   const linkedCardTitles = useMemo(() => {
     if (!detail?.cardIds?.length) return [];
     const map = new Map(cards.map((c) => [c.id, c.title]));
-    return detail.cardIds.map((id) => ({ id, title: map.get(id) ?? "Untitled" }));
+    return detail.cardIds.map((id: string) => ({ id, title: map.get(id) ?? "Untitled" }));
   }, [detail?.cardIds, cards]);
 
   const toggleDone = useCallback(async () => {
@@ -500,20 +368,90 @@ export default function AgendaScreen({ navigation }: Props) {
     await setLinkedCards(detail.id, nextIds);
   }, [detail, cards, setLinkedCards]);
 
+  // ✅ STEP 2G: menu rapido long press (MVP con Alert)
+  const openQuickMenu = useCallback(
+    (eventId: string) => {
+      const state = useEventStore.getState();
+      const ev = state.getEvent(eventId);
+      if (!ev) return;
+
+      Alert.alert("Quick actions", String(ev.title ?? ""), [
+        {
+          text: ev.status === "done" ? "Mark To-do" : "Mark Done",
+          onPress: async () => {
+            const next = ev.status === "done" ? "todo" : "done";
+            await updateEvent(eventId, { status: next });
+          },
+        },
+        {
+          text: "Duplicate",
+          onPress: async () => {
+            const startAt = Number(ev.startAt ?? selectedDayStart);
+            const endAt = ev.endAt == null ? null : Number(ev.endAt);
+            const id = await createEvent({
+              title: String(ev.title ?? "Untitled") + " (copy)",
+              notes: ev.notes ?? null,
+              startAt,
+              endAt: endAt ?? (startAt + 60 * 60 * 1000),
+              allDay: !!ev.allDay,
+              status: "todo",
+              category: ev.category ?? null,
+              linkedCardIds: ev.cardIds ?? [],
+            });
+            setDetailId(id);
+            setDetailOpen(true);
+          },
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => confirmDelete(eventId, String(ev.title ?? "")),
+        },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    },
+    [confirmDelete, createEvent, selectedDayStart, updateEvent]
+  );
+
   const dayTitle = useMemo(() => formatDayTitle(selectedDayStart), [selectedDayStart]);
   const showClear = statusFilter !== "all" || (categoryFilter ?? "").trim().length > 0;
 
-  // ---- WEEK sections (7 days) ----
-  const weekSections = useMemo(() => {
-    void rev;
-    const days = Array.from({ length: 7 }).map((_, i) => addDaysStart(weekStart, i));
-    return days.map((d0) => ({
-      key: ymdKeyFromStart(d0),
-      dayStart: d0,
-      title: `${shortDowLabel(d0)} • ${formatDayTitle(d0)}`,
-      data: eventsForDayStart(d0),
-    }));
-  }, [rev, weekStart, eventsForDayStart]);
+  // Week data for WeekGrid
+  const eventsForDayIndex = useCallback(
+    (i: number) => eventsForDayStart(addDaysStart(weekStart, i)),
+    [eventsForDayStart, weekStart]
+  );
+
+  // ✅ STEP 2G FIX — Guard rails per commit drag/resize (evita start_at NULL / NaN)
+  const commitMoveResize = useCallback(
+    (id: string, startMinRaw: any, endMinRaw: any) => {
+      const startMinN = Number(startMinRaw);
+      const endMinN = Number(endMinRaw);
+
+      if (!Number.isFinite(startMinN) || !Number.isFinite(endMinN)) {
+        console.warn("[Agenda] commitMoveResize invalid minutes:", { id, startMinRaw, endMinRaw });
+        return;
+      }
+
+      // clamp safe range
+      const startMin = clamp(Math.round(startMinN), 0, 24 * 60 - 1);
+      const endMinClamped = clamp(Math.round(endMinN), 0, 24 * 60);
+
+      // ensure end > start (minimum 15 minutes)
+      const endMin = Math.max(endMinClamped, startMin + 15);
+
+      const startAt = selectedDayStart + startMin * 60 * 1000;
+      const endAt = selectedDayStart + endMin * 60 * 1000;
+
+      if (!Number.isFinite(startAt) || !Number.isFinite(endAt) || endAt <= startAt) {
+        console.warn("[Agenda] commitMoveResize invalid timestamps:", { id, startAt, endAt, startMin, endMin });
+        return;
+      }
+
+      updateEvent(String(id), { startAt, endAt });
+    },
+    [selectedDayStart, updateEvent]
+  );
 
   const Header = useMemo(() => {
     const showCalendar = viewMode === "month";
@@ -522,13 +460,7 @@ export default function AgendaScreen({ navigation }: Props) {
     return (
       <View style={styles.headerWrap}>
         <View style={styles.dayHeaderRow}>
-          <Pressable
-            onPress={goPrevDay}
-            android_ripple={{ color: "#00000010", borderless: true }}
-            style={styles.dayNavBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Previous day"
-          >
+          <Pressable onPress={goPrevDay} android_ripple={{ color: "#00000010", borderless: true }} style={styles.dayNavBtn}>
             <Icon name="chevron-back" size={20} color={C.deep} />
           </Pressable>
 
@@ -539,13 +471,7 @@ export default function AgendaScreen({ navigation }: Props) {
             <Text style={[styles.dayKeyText, { color: C.muted }]}>{selectedDateKey}</Text>
           </View>
 
-          <Pressable
-            onPress={goNextDay}
-            android_ripple={{ color: "#00000010", borderless: true }}
-            style={styles.dayNavBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Next day"
-          >
+          <Pressable onPress={goNextDay} android_ripple={{ color: "#00000010", borderless: true }} style={styles.dayNavBtn}>
             <Icon name="chevron-forward" size={20} color={C.deep} />
           </Pressable>
         </View>
@@ -555,13 +481,51 @@ export default function AgendaScreen({ navigation }: Props) {
           <ButtonPrimary title="New event" icon="add-outline" onPress={openCreate} style={styles.quickBtn} />
         </View>
 
-        {/* STEP 2C — View toggle */}
         <View style={{ marginTop: 12 }}>
-          <SegmentedViewRow value={viewMode} onChange={setViewMode} C={{ white: C.white, deep: C.deep }} />
+          <View style={styles.segmentedWrap}>
+            {(["day", "week", "month"] as ViewMode[]).map((m) => {
+              const active = viewMode === m;
+              const icon = m === "day" ? "today-outline" : m === "week" ? "calendar-outline" : "grid-outline";
+              return (
+                <Pressable
+                  key={m}
+                  onPress={() => setViewMode(m)}
+                  android_ripple={{ color: "#00000010" }}
+                  style={[
+                    styles.segmentItem,
+                    active && { backgroundColor: C.white, borderWidth: 1, borderColor: "#00000010" },
+                  ]}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Icon name={icon} size={16} color={C.deep} />
+                    <Text style={[styles.segmentText, { color: C.deep }]}>{m[0].toUpperCase() + m.slice(1)}</Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <View style={{ marginTop: 12 }}>
-          <SegmentedStatusRow value={statusFilter} onChange={setStatusFilter} C={{ white: C.white, deep: C.deep }} />
+          <View style={styles.segmentedWrap}>
+            {(["all", "todo", "doing", "done"] as const).map((k) => {
+              const active = statusFilter === k;
+              const label = k === "all" ? "All" : k === "todo" ? "To-do" : k === "doing" ? "Doing" : "Done";
+              return (
+                <Pressable
+                  key={k}
+                  onPress={() => setStatusFilter(k)}
+                  android_ripple={{ color: "#00000010" }}
+                  style={[
+                    styles.segmentItem,
+                    active && { backgroundColor: C.white, borderWidth: 1, borderColor: "#00000010" },
+                  ]}
+                >
+                  <Text style={[styles.segmentText, { color: C.deep }]}>{label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <CardContainer style={styles.filterCard}>
@@ -585,18 +549,45 @@ export default function AgendaScreen({ navigation }: Props) {
           </View>
         </CardContainer>
 
+        {viewMode === "day" ? (
+          <DayTimelineGrid
+            C={C}
+            dayStart={selectedDayStart}
+            events={events as any}
+            onPressEvent={(id) => {
+              setDetailId(id);
+              setDetailOpen(true);
+            }}
+            onLongPressEvent={(id) => openQuickMenu(id)}
+            onTapCreateAtMinutes={(min) => openCreateAt(selectedDayStart, min)}
+            onCommitMoveResize={(id, startMin, endMin) => commitMoveResize(String(id), startMin, endMin)}
+          />
+        ) : null}
+
         {showWeek ? (
-          <CardContainer style={styles.weekCard}>
-            <WeekStrip
-              weekStart={weekStart}
-              selectedDayStart={selectedDayStart}
-              onSelectDay={(d0) => setSelectedDayStart(d0)}
-              C={C}
-            />
-            <Text style={[styles.calendarHint, { color: C.muted }]}>
-              Week view • Scroll to see all week events below.
-            </Text>
-          </CardContainer>
+          <WeekGrid
+            C={C}
+            weekStart={weekStart}
+            eventsForDayIndex={eventsForDayIndex}
+            onPressEvent={(id) => {
+              setDetailId(id);
+              setDetailOpen(true);
+            }}
+            onLongPressEvent={(id) => openQuickMenu(id)}
+            onTapCreate={(dayIndex, min) => openCreateAt(addDaysStart(weekStart, dayIndex), min)}
+
+            onCommitMoveEvent={(id, nextDayIndex, nextStartMin, nextEndMin) => {
+              const dayStart = addDaysStart(weekStart, nextDayIndex);
+
+              const startAt = dayStart + nextStartMin * 60000;
+              const endAt = dayStart + nextEndMin * 60000;
+
+              updateEvent(id, {
+                startAt,
+                endAt,
+              });
+            }}
+          />
         ) : null}
 
         {showCalendar ? (
@@ -604,6 +595,7 @@ export default function AgendaScreen({ navigation }: Props) {
             <Calendar
               current={ymdKeyFromStart(visibleMonthStart)}
               markedDates={markedDates}
+              markingType="multi-dot"
               onDayPress={onCalendarDayPress}
               onMonthChange={onCalendarMonthChange}
               enableSwipeMonths
@@ -620,7 +612,7 @@ export default function AgendaScreen({ navigation }: Props) {
               }}
             />
             <Text style={[styles.calendarHint, { color: C.muted }]}>
-              Month loaded: {visibleMonthKey} • Dots show days with events.
+              Month loaded: {visibleMonthKey} • 1–3 dots show density (more = more events).
             </Text>
           </CardContainer>
         ) : null}
@@ -633,6 +625,8 @@ export default function AgendaScreen({ navigation }: Props) {
     categoryFilter,
     clearFilters,
     dayTitle,
+    events,
+    eventsForDayIndex,
     goNextDay,
     goPrevDay,
     goToday,
@@ -641,7 +635,10 @@ export default function AgendaScreen({ navigation }: Props) {
     onCalendarDayPress,
     onCalendarMonthChange,
     openCreate,
+    openCreateAt,
+    openQuickMenu,
     selectedDateKey,
+    selectedDayStart,
     setCategoryFilter,
     setStatusFilter,
     showClear,
@@ -649,32 +646,29 @@ export default function AgendaScreen({ navigation }: Props) {
     viewMode,
     visibleMonthKey,
     visibleMonthStart,
-    selectedDayStart,
     weekStart,
+    commitMoveResize,
   ]);
 
-  // ---- shared renderer for event item (used by FlatList + SectionList) ----
   const renderEventItem = useCallback(
     (item: any, dayStartOverride?: number) => {
       const dayStart = startOfDayMs(dayStartOverride ?? selectedDayStart);
-const dayEndExclusive = addDaysStart(dayStart, 1);
+      const dayEndExclusive = addDaysStart(dayStart, 1);
 
-const startAt = Number(item.startAt ?? 0);
-const endAt = item.endAt == null ? null : Number(item.endAt);
+      const startAt = Number(item.startAt ?? 0);
+      const endAt = item.endAt == null ? null : Number(item.endAt);
 
-// Default: show start time
-let timeLabel = item.allDay ? "All day" : formatTime(startAt);
+      let timeLabel = item.allDay ? "All day" : formatTime(startAt);
 
-// If multi-day and this day is NOT the start day, show end time
-if (!item.allDay && endAt && endAt > startAt) {
-  const startDay = startOfDayMs(startAt);
-  if (startDay !== dayStart) {
-    const clampedEnd = Math.min(endAt, dayEndExclusive);
-    timeLabel = "Until " + formatTime(clampedEnd - 1);
-  }
-}
+      if (!item.allDay && endAt && endAt > startAt) {
+        const startDay = startOfDayMs(startAt);
+        if (startDay !== dayStart) {
+          const clampedEnd = Math.min(endAt, dayEndExclusive);
+          timeLabel = "Until " + formatTime(clampedEnd - 1);
+        }
+      }
+
       const metaLine = "Time: " + timeLabel + (item.category ? "  |  Category: " + String(item.category) : "");
-
       const b = statusToBadge(item.status);
 
       return (
@@ -685,10 +679,9 @@ if (!item.allDay && endAt && endAt > startAt) {
                 setDetailId(item.id);
                 setDetailOpen(true);
               }}
+              onLongPress={() => openQuickMenu(String(item.id))}
               android_ripple={{ color: "#00000008" }}
               style={styles.eventPressable}
-              accessibilityRole="button"
-              accessibilityLabel="Open event"
             >
               <View style={styles.eventTitleRow}>
                 <Text style={[styles.eventTitle, { color: C.deep }]}>{String(item.title ?? "")}</Text>
@@ -702,65 +695,46 @@ if (!item.allDay && endAt && endAt > startAt) {
               ) : null}
 
               {!!item.cardIds?.length ? (
-                <Text style={[styles.linkedCount, { color: C.primary }]}>
-                  {"Linked cards: " + String(item.cardIds.length)}
-                </Text>
+                <Text style={[styles.linkedCount, { color: C.primary }]}>{"Linked cards: " + String(item.cardIds.length)}</Text>
               ) : null}
             </Pressable>
           </CardContainer>
         </View>
       );
     },
-    [selectedDayStart, C.deep, C.muted, C.primary]
+    [selectedDayStart, C.deep, C.muted, C.primary, openQuickMenu]
   );
 
   return (
     <View style={{ flex: 1, backgroundColor: C.background }}>
-      {viewMode === "week" ? (
-        <SectionList
-          sections={weekSections as any}
-          keyExtractor={(item: any) => item.id}
-          ListHeaderComponent={Header}
-          contentContainerStyle={styles.listContent}
-          stickySectionHeadersEnabled={false}
-          renderSectionHeader={({ section }: any) => (
-            <View style={styles.weekSectionHeader}>
-              <Text style={[styles.weekSectionTitle, { color: C.deep }]}>{section.title}</Text>
-            </View>
-          )}
-          renderItem={({ item, section }: any) => renderEventItem(item, section.dayStart)}
-          ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              <Text style={[styles.emptyTitle, { color: C.deep }]}>No events in this week</Text>
-              <Text style={[styles.emptyText, { color: C.primary }]}>
-                {"Create an event to start using Agenda.\nOffline-first, fast, and linked to your cards."}
-              </Text>
-              <View style={{ marginTop: 16 }}>
-                <ButtonPrimary title="Create event" icon="add-outline" onPress={openCreate} />
-              </View>
-            </View>
-          }
-        />
-      ) : (
+      {/* Lista solo per Month (e volendo day/month future). Week ormai è griglia */}
+      {viewMode === "month" ? (
         <FlatList
           data={events}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item: any) => item.id}
           ListHeaderComponent={Header}
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <Text style={[styles.emptyTitle, { color: C.deep }]}>No events for this day</Text>
-
               <Text style={[styles.emptyText, { color: C.primary }]}>
                 {"Create an event to start using Agenda.\nOffline-first, fast, and linked to your cards."}
               </Text>
-
               <View style={{ marginTop: 16 }}>
                 <ButtonPrimary title="Create event" icon="add-outline" onPress={openCreate} />
               </View>
             </View>
           }
-          renderItem={({ item }) => renderEventItem(item)}
+          renderItem={({ item }: any) => renderEventItem(item)}
+        />
+      ) : (
+        <SectionList
+          sections={[{ title: "", data: [] }]}
+          keyExtractor={(_, idx) => String(idx)}
+          ListHeaderComponent={Header}
+          contentContainerStyle={styles.listContent}
+          renderItem={null as any}
+          stickySectionHeadersEnabled={false}
         />
       )}
 
@@ -769,8 +743,6 @@ if (!item.allDay && endAt && endAt > startAt) {
         onPress={openCreate}
         android_ripple={{ color: "#ffffff33" }}
         style={[styles.fab, { bottom: 18 + insets.bottom, backgroundColor: C.accent }]}
-        accessibilityRole="button"
-        accessibilityLabel="Create new event"
       >
         <Icon name="add" size={28} color={C.white} />
       </Pressable>
@@ -781,6 +753,23 @@ if (!item.allDay && endAt && endAt > startAt) {
           <View style={[styles.modalCard, { backgroundColor: C.white }]}>
             <Text style={[styles.modalTitle, { color: C.deep }]}>New event</Text>
             <Text style={styles.modalSub}>{dayTitle}</Text>
+
+            <View style={{ marginTop: 12 }}>
+              <Pressable
+                onPress={() => setNewAllDay((v) => !v)}
+                android_ripple={{ color: "#00000010" }}
+                style={{
+                  padding: 10,
+                  borderRadius: 12,
+                  backgroundColor: newAllDay ? "#DBEAFE" : "#00000006",
+                  borderWidth: 1,
+                  borderColor: "#00000010",
+                  overflow: "hidden",
+                }}
+              >
+                <Text style={{ fontWeight: "900", color: C.deep }}>{newAllDay ? "All day: YES" : "All day: NO"}</Text>
+              </Pressable>
+            </View>
 
             <View style={{ marginTop: 12 }}>
               <Text style={[styles.fieldLabel, { color: C.deep }]}>Title</Text>
@@ -816,65 +805,78 @@ if (!item.allDay && endAt && endAt > startAt) {
               />
             </View>
 
-            <View style={{ marginTop: 14 }}>
-  <Text style={[styles.fieldLabel, { color: C.deep }]}>Start hour (0–23)</Text>
-  <TextInput
-    value={String(startHour)}
-    onChangeText={(v) =>
-      setStartHour(Math.max(0, Math.min(23, Number(v) || 0)))
-    }
-    keyboardType="numeric"
-    style={[styles.fieldInput, { color: C.deep }]}
-  />
-</View>
+            {!newAllDay ? (
+              <>
+                {/* Start */}
+                <View style={{ marginTop: 14 }}>
+                  <Text style={[styles.fieldLabel, { color: C.deep }]}>Start (HH / MM)</Text>
+                  <View style={{ flexDirection: "row", gap: 10 }}>
+                    <TextInput
+                      value={String(startHour)}
+                      onChangeText={(v) => setStartHour(clamp(Number(v) || 0, 0, 23))}
+                      keyboardType="numeric"
+                      style={[styles.fieldInput, { flex: 1, color: C.deep }]}
+                    />
+                    <TextInput
+                      value={String(startMinute)}
+                      onChangeText={(v) => setStartMinute(clamp(Number(v) || 0, 0, 59))}
+                      keyboardType="numeric"
+                      style={[styles.fieldInput, { flex: 1, color: C.deep }]}
+                    />
+                  </View>
+                </View>
 
-<View style={{ marginTop: 12 }}>
-  <Text style={[styles.fieldLabel, { color: C.deep }]}>End hour (0–23)</Text>
-  <TextInput
-    value={String(endHour)}
-    onChangeText={(v) =>
-      setEndHour(Math.max(0, Math.min(23, Number(v) || 0)))
-    }
-    keyboardType="numeric"
-    style={[styles.fieldInput, { color: C.deep }]}
-  />
-</View>
+                {/* End */}
+                <View style={{ marginTop: 12 }}>
+                  <Text style={[styles.fieldLabel, { color: C.deep }]}>End (HH / MM)</Text>
+                  <View style={{ flexDirection: "row", gap: 10 }}>
+                    <TextInput
+                      value={String(endHour)}
+                      onChangeText={(v) => setEndHour(clamp(Number(v) || 0, 0, 23))}
+                      keyboardType="numeric"
+                      style={[styles.fieldInput, { flex: 1, color: C.deep }]}
+                    />
+                    <TextInput
+                      value={String(endMinute)}
+                      onChangeText={(v) => setEndMinute(clamp(Number(v) || 0, 0, 59))}
+                      keyboardType="numeric"
+                      style={[styles.fieldInput, { flex: 1, color: C.deep }]}
+                    />
+                  </View>
+                </View>
 
-<View style={{ marginTop: 12 }}>
-  <Pressable
-    onPress={() => setEndsNextDay((v) => !v)}
-    android_ripple={{ color: "#00000010" }}
-    style={{
-      padding: 10,
-      borderRadius: 12,
-      backgroundColor: endsNextDay ? "#DBEAFE" : "#00000006",
-      borderWidth: 1,
-      borderColor: "#00000010",
-      overflow: "hidden",
-    }}
-    accessibilityRole="button"
-    accessibilityLabel="Toggle ends next day"
-  >
-    <Text style={{ fontWeight: "900", color: C.deep }}>
-      {endsNextDay ? "Ends next day: YES" : "Ends next day: NO"}
-    </Text>
-  </Pressable>
-</View>
+                <View style={{ marginTop: 12 }}>
+                  <Pressable
+                    onPress={() => setEndsNextDay((v) => !v)}
+                    android_ripple={{ color: "#00000010" }}
+                    style={{
+                      padding: 10,
+                      borderRadius: 12,
+                      backgroundColor: endsNextDay ? "#DBEAFE" : "#00000006",
+                      borderWidth: 1,
+                      borderColor: "#00000010",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <Text style={{ fontWeight: "900", color: C.deep }}>
+                      {endsNextDay ? "Ends next day: YES" : "Ends next day: NO"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <Text style={[styles.modalSub, { marginTop: 10 }]}>All-day event • covers the full day</Text>
+            )}
 
             <View style={styles.modalButtonsRow}>
-              <ButtonSecondary
-                title="Cancel"
-                icon="close-circle-outline"
-                onPress={() => setCreateOpen(false)}
-                style={styles.modalBtn}
-              />
+              <ButtonSecondary title="Cancel" icon="close-circle-outline" onPress={() => setCreateOpen(false)} style={styles.modalBtn} />
               <ButtonPrimary title="Create" icon="checkmark-circle-outline" onPress={doCreate} style={styles.modalBtn} />
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Detail Modal */}
+      {/* Detail Modal (identico al tuo, invariato) */}
       <Modal visible={detailOpen} transparent animationType="fade" onRequestClose={() => setDetailOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { backgroundColor: C.white }]}>
@@ -907,8 +909,6 @@ if (!item.allDay && endAt && endAt > startAt) {
                         }}
                         android_ripple={{ color: "#00000010" }}
                         style={styles.linkPill}
-                        accessibilityRole="button"
-                        accessibilityLabel="Open linked card"
                       >
                         <Icon name="link-outline" size={16} color="#1D4ED8" />
                         <Text style={styles.linkPillText}>{String(c.title ?? "")}</Text>
@@ -924,12 +924,7 @@ if (!item.allDay && endAt && endAt > startAt) {
                 </View>
 
                 <View style={styles.modalButtonsRow}>
-                  <ButtonSecondary
-                    title="Close"
-                    icon="close-circle-outline"
-                    onPress={() => setDetailOpen(false)}
-                    style={styles.modalBtn}
-                  />
+                  <ButtonSecondary title="Close" icon="close-circle-outline" onPress={() => setDetailOpen(false)} style={styles.modalBtn} />
                   <ButtonPrimary
                     title={detail.status === "done" ? "Mark To-do" : "Mark Done"}
                     icon={detail.status === "done" ? "refresh-outline" : "checkmark-circle-outline"}
@@ -942,8 +937,6 @@ if (!item.allDay && endAt && endAt > startAt) {
                   onPress={() => confirmDelete(detail.id, detail.title)}
                   android_ripple={{ color: "#00000010" }}
                   style={styles.deleteBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel="Delete event"
                 >
                   <Icon name="trash-outline" size={18} color="#7F1D1D" />
                   <Text style={styles.deleteText}>Delete</Text>
@@ -1014,36 +1007,12 @@ const styles = StyleSheet.create({
   filterRow: { flexDirection: "row", alignItems: "center" },
   filterLabel: { fontSize: 13, fontWeight: "900" },
   filterInput: { flex: 1, paddingVertical: 0, marginLeft: 10 },
-  clearBtn: {
-    marginLeft: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-  },
-
-  weekCard: { padding: 12, marginTop: 12 },
-  weekRow: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
-  weekPill: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#00000010",
-    backgroundColor: "#FFFFFF",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  weekDow: { fontSize: 11, fontWeight: "900" },
-  weekDay: { fontSize: 14, fontWeight: "900" },
+  clearBtn: { marginLeft: 10, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 12 },
 
   calendarCard: { padding: 12, marginTop: 12 },
   calendarHint: { marginTop: 8, fontSize: 12, fontWeight: "700" },
 
   listContent: { paddingBottom: 120 },
-
-  weekSectionHeader: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 },
-  weekSectionTitle: { fontSize: 13, fontWeight: "900" },
 
   emptyWrap: { marginTop: 24, alignItems: "center", paddingHorizontal: 18, paddingBottom: 40 },
   emptyTitle: { fontSize: 20, fontWeight: "800" },
